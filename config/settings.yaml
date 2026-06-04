@@ -1,9 +1,9 @@
-# cccl-to-accl-v3 用户配置
+# ASC_agent（cccl-to-accl-v3）用户配置
 # 只需覆盖你关心的字段，其余项自动回退到 core/config.py 的 DEFAULTS。
 # 字符串里可用 ${ENV} 与 ${ENV:-默认值}；PROJECT_ROOT / HOME 已内置。
 
 project:
-  name: cccl-to-accl-v3
+  name: ASC_agent
 
 paths:
   # 源仓库（CCCL）与目标仓库（ACCL）默认都放在项目内 repos/ 下，
@@ -15,6 +15,11 @@ paths:
 mapping:
   source_repo_prefix: libcudacxx/include/cuda/std
   target_repo_prefix: libascendcxx/include/ascend/std
+  # CCCL 侧测试树（平行于 include，贴近真实 libcudacxx）。算子头 <op>.h 对应的
+  # 测试源约定为 <cccl_test_prefix>/<相同子路径>/<op><cccl_test_suffix>，
+  # 用于「同步迁移测试代码」（见 core/test_migrator.py）。
+  cccl_test_prefix: libcudacxx/test/std
+  cccl_test_suffix: .pass.cpp
   # 目录段重命名（v2 缺失这一步，导致 os.h 的 header guard 与示例对不上）
   segment_substitutions:
     - { from: __cccl, to: __accl }
@@ -58,11 +63,23 @@ retry:
 
 examples:
   example_1:
-    cccl: "${PROJECT_ROOT}/examples/example1_cccl.h"
-    accl: "${PROJECT_ROOT}/examples/example1_accl.h"
+    cccl: "${PROJECT_ROOT}/examples/headers/max.cccl.h"
+    accl: "${PROJECT_ROOT}/examples/headers/max.accl.h"
   example_2:
-    cccl: "${PROJECT_ROOT}/examples/example2_cccl.h"
-    accl: "${PROJECT_ROOT}/examples/example2_accl.h"
+    cccl: "${PROJECT_ROOT}/examples/headers/os.cccl.h"
+    accl: "${PROJECT_ROOT}/examples/headers/os.accl.h"
+
+# 测试迁移的少样本示例对（CCCL 测试 -> ACCL host 测试 + kernel_spec）。
+# example_1 覆盖二元返回值(max)，example_2 覆盖原地 void(swap) —— 各教一种算子形态。
+test_examples:
+  example_1:
+    cccl_test: "${PROJECT_ROOT}/examples/tests/max.cccl.pass.cpp"
+    accl_host: "${PROJECT_ROOT}/examples/tests/max.accl_host.cpp"
+    accl_kernel_spec: "${PROJECT_ROOT}/examples/tests/max.accl_kernel_spec.json"
+  example_2:
+    cccl_test: "${PROJECT_ROOT}/examples/tests/swap.cccl.pass.cpp"
+    accl_host: "${PROJECT_ROOT}/examples/tests/swap.accl_host.cpp"
+    accl_kernel_spec: "${PROJECT_ROOT}/examples/tests/swap.accl_kernel_spec.json"
 
 normalize:
   fix_directive_spacing: true

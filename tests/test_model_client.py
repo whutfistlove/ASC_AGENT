@@ -25,6 +25,18 @@ def test_extract_json_with_surrounding_text():
     assert extract_json_object(text) == {"k": "v"}
 
 
+def test_extract_json_strict_rejects_surrounding_text():
+    text = "前面一些说明\n{\"k\": \"v\"}"
+    with pytest.raises(ValueError, match="单个 JSON 对象"):
+        extract_json_object(text, strict=True)
+
+
+def test_extract_json_strict_rejects_fenced_json():
+    text = "```json\n{\"a\": 1}\n```"
+    with pytest.raises(ValueError, match="单个 JSON 对象"):
+        extract_json_object(text, strict=True)
+
+
 def test_extract_json_invalid_raises():
     with pytest.raises(ValueError):
         extract_json_object("no json here")

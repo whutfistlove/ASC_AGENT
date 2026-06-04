@@ -81,6 +81,32 @@ def map_target_relpath(
     return tgt_prefix + rel
 
 
+def map_cccl_test_path(
+    input_path: Path,
+    source_repo_prefix: str,
+    cccl_test_prefix: str,
+    suffix: str = ".pass.cpp",
+) -> str:
+    """从 CCCL 算子头文件路径推导其 CCCL 侧测试源路径（平行 test 树）。
+
+        <root>/libcudacxx/include/cuda/std/__algorithm/min.h
+          -> <root>/libcudacxx/test/std/__algorithm/min.pass.cpp
+
+    保持算子的子路径段不变（如 __algorithm/min），仅把 include 前缀换成 test 前缀、
+    把头文件后缀换成测试后缀。返回绝对路径字符串；调用方负责判断是否存在。
+    """
+    path_str = normalize_path_str(str(input_path))
+    prefix = normalize_path_str(source_repo_prefix).rstrip("/") + "/"
+    if prefix not in path_str:
+        raise ValueError(
+            f"输入文件不在允许的源前缀下：{source_repo_prefix}\n当前输入：{input_path}"
+        )
+    root, rel = path_str.split(prefix, 1)  # root 以 '/' 结尾
+    stem = normalize_path_str(str(Path(rel).with_suffix("")))  # __algorithm/min
+    test_prefix = normalize_path_str(cccl_test_prefix).strip("/")
+    return root + test_prefix + "/" + stem + suffix
+
+
 def expected_guard_from_relpath(target_relpath: str) -> str:
     rel = normalize_path_str(target_relpath).strip("/")
     rel = rel.replace("/", "_").replace(".", "_").replace("-", "_")

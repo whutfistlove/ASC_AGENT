@@ -67,14 +67,49 @@ def test_loop_fixes_then_passes(tmp_path, monkeypatch):
         return {"host_passed": ok, "kernel_passed": ok, "error": "", "skipped": False}
 
     monkeypatch.setattr(main, "_run_operator_tests", fake_tests)
-    model = MockModelClient(responses=['{"rewritten_code": "// fixed v1\\n", "notes": "fix"}'])
+    # 新契约：失败时模型可改 header(rewritten_code) / host_test_code / kernel_spec 的任意子集。
+    # 这里用 rewritten_code（模型最自然的键名），验证别名被正确识别为 header 修复。
+    model = MockModelClient(
+        responses=['{"root_cause": "operator", "rewritten_code": "// fixed v1\\n", "notes": "fix"}']
+    )
 
     tr = main._run_convert_test_loop(_args(), cfg, model, _result(), write_to_repo=True)
 
     assert tr["host_passed"] is True and tr["kernel_passed"] is True
     assert target.read_text(encoding="utf-8") == "// fixed v1\n"   # 修复已写回仓库
     assert len(tr["fix_rounds"]) == 1 and tr["fix_rounds"][0]["passed"] is True
+    assert tr["fix_rounds"][0]["applied"] == ["header"]
     assert calls["n"] == 2                                          # 初测 + 修复后重测
+
+
+def test_loop_fixes_test_not_operator(tmp_path, monkeypatch):
+    """失败根因在测试时，应改测试（host_test_code）而非算子 header —— 防止 swap 那类被篡改。"""
+    cfg = _make_config(tmp_path)
+    target = _seed_target(cfg)
+
+    calls = {"n": 0}
+    seen = {}
+
+    def fake_tests(args, config, target_relpath, **kw):
+        calls["n"] += 1
+        seen["artifacts"] = kw.get("test_artifacts")
+        ok = calls["n"] >= 2
+        return {"host_passed": ok, "kernel_passed": ok, "error": "", "skipped": False}
+
+    monkeypatch.setattr(main, "_run_operator_tests", fake_tests)
+    new_host = "static int g_failures = 0;\\nint main(){return g_failures == 0 ? 0 : 1;}\\n"
+    model = MockModelClient(
+        responses=[f'{{"root_cause": "host_test", "host_test_code": "{new_host}", "notes": "fix test"}}']
+    )
+
+    tr = main._run_convert_test_loop(_args(), cfg, model, _result(), write_to_repo=True)
+
+    assert tr["fix_rounds"][0]["applied"] == ["host_test"]
+    assert tr["fix_rounds"][0]["passed"] is True
+    # 关键：算子 header 未被改动（语义为基准）。
+    assert target.read_text(encoding="utf-8") == "// broken v0\n"
+    # 修好的 host 测试随 artifacts 传入下一次测试。
+    assert seen["artifacts"]["host_test_code"] == new_host.replace("\\n", "\n")
 
 
 def test_loop_disabled_without_flag(tmp_path, monkeypatch):
@@ -99,8 +134,8 @@ def test_loop_runs_until_max_rounds(tmp_path, monkeypatch):
         main, "_run_operator_tests",
         lambda *a, **k: {"host_passed": False, "kernel_passed": False, "error": "", "skipped": False},
     )
-    # 每轮都给一个与上一版不同的内容，避免“未变化”短路
-    responses = [f'{{"rewritten_code": "// v{i}\\n", "notes": "n"}}' for i in range(1, 6)]
+    # 每轮都给一个与上一版不同的 header_code（新契约）
+    responses = [f'{{"root_cause": "operator", "header_code": "// v{i}\\n", "notes": "n"}}' for i in range(1, 6)]
     model = MockModelClient(responses=responses)
     result = _result()
 

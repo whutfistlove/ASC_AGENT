@@ -1,4 +1,4 @@
-"""cccl-to-accl-v3 命令行入口。
+"""ASC_agent 命令行入口。
 
 子命令：
     convert  只做「生成 -> 写入目标仓库 -> 可选跑测试」，跳过 git 提交（推荐的全流程入口）
@@ -25,12 +25,13 @@ from pathlib import Path
 import yaml
 
 from core.config import Config
-from core.fix_once import run_single_fix_from_test_feedback, run_test_feedback_fix
+from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
 from core.model_client import MockModelClient, build_model_client
 from core.operator_test import OperatorTestRunner
-from core.path_mapper import expected_guard_from_relpath, map_target_relpath
+from core.path_mapper import expected_guard_from_relpath, map_cccl_test_path, map_target_relpath
 from core.pipeline import FakeVerifier, Pipeline, RunResult
 from core.repo_verify import RepoVerifier
+from core.test_migrator import migrate_operator_tests
 from core.utils import save_text
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -125,6 +126,77 @@ def _resolve_test_selection(args) -> tuple[bool, bool]:
     return True, True
 
 
+def _host_test_file_for(config: Config, target_relpath: str) -> Path:
+    """ACCL host 测试文件路径（与 OperatorTestRunner 的目录约定一致）。"""
+    algo = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
+    return (
+        Path(config.target_repo)
+        / "libascendcxx" / "test" / "libascendcxx" / "ascend" / "host"
+        / f"{algo}_tests.cpp"
+    )
+
+
+def _maybe_migrate_tests(
+    args,
+    config: Config,
+    model_client,
+    *,
+    input_path,
+    target_relpath: str,
+    verbose: bool = True,
+) -> dict | None:
+    """用模型把 CCCL 侧测试迁移为 ACCL host 测试 + kernel_spec。
+
+    不可用时返回 None（调用方回退到内置模板）：mock / test-dry-run / 无 model /
+    找不到 CCCL 测试 / 未找到已迁移的 ACCL 头 / 迁移异常。
+    """
+    if getattr(args, "mock", False) or getattr(args, "test_dry_run", False):
+        return None
+    if model_client is None or not input_path:
+        return None
+    try:
+        cccl_test_path = Path(
+            map_cccl_test_path(
+                Path(input_path),
+                source_repo_prefix=config.source_repo_prefix,
+                cccl_test_prefix=config.cccl_test_prefix,
+                suffix=config.cccl_test_suffix,
+            )
+        )
+    except ValueError:
+        return None
+    if not cccl_test_path.exists():
+        if verbose:
+            print(f"[test-migrate] 未找到 CCCL 侧测试 {cccl_test_path}，回退内置模板。")
+        return None
+    accl_header = Path(config.target_repo) / target_relpath
+    if not accl_header.exists():
+        if verbose:
+            print(f"[test-migrate] 未找到已迁移的 ACCL 头 {accl_header}，回退内置模板。")
+        return None
+
+    algo_name = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
+    include_path = OperatorTestRunner.include_path_from_target_relpath(target_relpath)
+    try:
+        artifacts = migrate_operator_tests(
+            config,
+            model_client,
+            algo_name=algo_name,
+            include_path=include_path,
+            target_relpath=target_relpath,
+            cccl_header_text=Path(input_path).read_text(encoding="utf-8"),
+            accl_header_text=accl_header.read_text(encoding="utf-8"),
+            cccl_test_text=cccl_test_path.read_text(encoding="utf-8"),
+            verbose=verbose,
+            show_model_io=getattr(args, "show_model_io", False),
+        )
+    except Exception as exc:  # 迁移失败不应中断流程，回退模板
+        if verbose:
+            print(f"[test-migrate] 迁移失败（{type(exc).__name__}: {exc}），回退内置模板。")
+        return None
+    return {"host_test_code": artifacts.host_test_code, "kernel_spec": artifacts.kernel_spec}
+
+
 def _run_operator_tests(
     args,
     config: Config,
@@ -133,6 +205,7 @@ def _run_operator_tests(
     require_ready_commit: bool = False,
     commit_passed: bool = True,
     skip_in_mock: bool = True,
+    test_artifacts: dict | None = None,
 ) -> dict:
     if require_ready_commit and not commit_passed:
         return {"skipped": True, "reason": "commit_not_passed"}
@@ -148,7 +221,9 @@ def _run_operator_tests(
         dry_run=args.test_dry_run,
         kernel_timeout_sec=kernel_timeout,
         fast_kernel=kernel_fast,
+        kernel_print_samples=getattr(args, "kernel_print_samples", None),
     )
+    artifacts = test_artifacts or {}
     tr = runner.prepare_and_run(
         target_relpath=target_relpath,
         run_host=run_host,
@@ -156,6 +231,8 @@ def _run_operator_tests(
         kernel_mode=args.kernel_mode,
         prepare_only=args.prepare_tests_only,
         overwrite=args.overwrite_tests,
+        host_test_code=artifacts.get("host_test_code"),
+        kernel_spec=artifacts.get("kernel_spec"),
     )
     return tr.to_dict()
 
@@ -286,12 +363,19 @@ def cmd_run(args) -> int:
     result = pipeline.run(Path(args.input))
 
     if args.with_tests:
+        artifacts = None
+        if result.commit_passed:
+            artifacts = _maybe_migrate_tests(
+                args, config, model_client,
+                input_path=args.input, target_relpath=result.target_relpath, verbose=not args.quiet,
+            )
         result.test_result = _run_operator_tests(
             args,
             config,
             result.target_relpath,
             require_ready_commit=True,
             commit_passed=result.commit_passed,
+            test_artifacts=artifacts,
         )
         run_host, run_kernel = _resolve_test_selection(args)
         if (
@@ -334,10 +418,18 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
     """
     run_host, run_kernel = _resolve_test_selection(args)
 
-    # 第一次测试
+    # 迁移测试（host + kernel_spec）；不可用则回退内置模板。
+    artifacts = _maybe_migrate_tests(
+        args, config, model_client,
+        input_path=getattr(args, "input", None), target_relpath=result.target_relpath,
+        verbose=not args.quiet,
+    )
+
+    # 第一次测试（带迁移好的测试 artifacts）
     test_result = _run_operator_tests(
         args, config, result.target_relpath,
         require_ready_commit=False, commit_passed=True, skip_in_mock=False,
+        test_artifacts=artifacts,
     )
 
     # 是否需要进入修复循环
@@ -357,28 +449,39 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
         return test_result
 
     target_file = Path(config.target_repo) / result.target_relpath
+    host_file = _host_test_file_for(config, result.target_relpath)
     max_rounds = getattr(args, "max_fix_rounds", 0) or config.max_fix_rounds
     rounds_log: list[dict] = []
+    # 当前可修复件：header(写在仓库) + host 测试 + kernel_spec（保存在内存里随轮更新）。
+    cur_artifacts: dict = dict(artifacts) if artifacts else {}
 
     for r in range(1, max_rounds + 1):
         if not args.quiet:
             print(f"\n==== 测试反馈修复 第 {r}/{max_rounds} 轮 ====")
-        baseline_text = target_file.read_text(encoding="utf-8")
         test_text = _build_test_feedback_text(test_result)
         if not test_text:
             test_result["fix_loop_note"] = "测试反馈为空，停止修复"
             break
 
+        header_text = target_file.read_text(encoding="utf-8")
+        if host_file.exists():
+            host_text = host_file.read_text(encoding="utf-8")
+        else:
+            host_text = cur_artifacts.get("host_test_code", "") or ""
+
         try:
-            _, fixed_code = run_test_feedback_fix(
+            # 关键：失败时模型可改 header / host 测试 / kernel_spec 任意子集；
+            # 算子语义为基准，测试写错就改测试，绝不为迁就测试而篡改算子（如 swap）。
+            fix = run_test_artifact_fix(
                 config=config,
                 model_client=model_client,
                 target_relpath=result.target_relpath,
                 expected_header_guard=result.expected_header_guard,
-                baseline_text=baseline_text,
+                header_text=header_text,
+                host_test_text=host_text,
+                kernel_spec=cur_artifacts.get("kernel_spec"),
                 test_feedback_text=test_text,
                 round_index=r,
-                prompt_filename=args.test_feedback_skill,
                 verbose=not args.quiet,
                 show_model_io=getattr(args, "show_model_io", False),
             )
@@ -387,15 +490,28 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
             test_result["fix_rounds"] = rounds_log
             break
 
-        # 写回仓库并重测
-        target_file.write_text(fixed_code, encoding="utf-8")
+        applied: list[str] = []
+        if fix.get("header_code"):
+            target_file.write_text(fix["header_code"], encoding="utf-8")
+            applied.append("header")
+        if fix.get("host_test_code"):
+            cur_artifacts["host_test_code"] = fix["host_test_code"]
+            applied.append("host_test")
+        if fix.get("kernel_spec"):
+            cur_artifacts["kernel_spec"] = fix["kernel_spec"]
+            applied.append("kernel_spec")
+
+        # 用最新 artifacts 重新生成测试并重测
         test_result = _run_operator_tests(
             args, config, result.target_relpath,
             require_ready_commit=False, commit_passed=True, skip_in_mock=False,
+            test_artifacts=cur_artifacts,
         )
         passed = _tests_all_passed(test_result, run_host, run_kernel, test_dry_run=args.test_dry_run)
         rounds_log.append({
             "round": r,
+            "root_cause": fix.get("root_cause", ""),
+            "applied": applied,
             "host_passed": test_result.get("host_passed"),
             "kernel_passed": test_result.get("kernel_passed"),
             "passed": passed,
@@ -473,12 +589,19 @@ def cmd_batch(args) -> int:
                             show_model_io=getattr(args, "show_model_io", False))
         one = pipeline.run(Path(item))
         if args.with_tests:
+            artifacts = None
+            if one.commit_passed:
+                artifacts = _maybe_migrate_tests(
+                    args, config, model_client,
+                    input_path=item, target_relpath=one.target_relpath, verbose=not args.quiet,
+                )
             one.test_result = _run_operator_tests(
                 args,
                 config,
                 one.target_relpath,
                 require_ready_commit=True,
                 commit_passed=one.commit_passed,
+                test_artifacts=artifacts,
             )
             run_host, run_kernel = _resolve_test_selection(args)
             if (
@@ -521,12 +644,19 @@ def cmd_test(args) -> int:
     if args.test_feedback_to_model:
         model_client = MockModelClient() if args.mock else build_model_client(config)
 
+    # 有真实模型且给了 --input 时，迁移该算子的测试（host + kernel_spec）。
+    artifacts = _maybe_migrate_tests(
+        args, config, model_client,
+        input_path=getattr(args, "input", None), target_relpath=target_relpath, verbose=not args.quiet,
+    )
+
     result = _run_operator_tests(
         args,
         config,
         target_relpath,
         require_ready_commit=False,
         commit_passed=True,
+        test_artifacts=artifacts,
     )
 
     print("\n=== 测试结果 ===")
@@ -568,7 +698,7 @@ def cmd_selftest(args) -> int:
         with_tests=False, host_only=False, kernel_only=False,
         kernel_mode="run_test", prepare_tests_only=False,
         overwrite_tests=False, test_dry_run=False,
-        kernel_fast=False, kernel_timeout=0,
+        kernel_fast=False, kernel_timeout=0, kernel_print_samples=None,
         test_feedback_to_model=False, test_feedback_skill="rewrite_fix_from_log_and_test.md",
     )
     return cmd_batch(ns)
@@ -605,6 +735,12 @@ def build_parser() -> argparse.ArgumentParser:
             type=int,
             default=0,
             help="kernel 测试超时秒数（0=取 tests.kernel_timeout_sec，默认 1200）",
+        )
+        p.add_argument(
+            "--kernel-print-samples",
+            type=int,
+            default=None,
+            help="kernel 日志逐元素打印多少条用例（默认 8；-1=全部；0=只留汇总）",
         )
         p.add_argument("--test-dry-run", action="store_true", help="打印并落盘测试命令，但不真正执行")
         p.add_argument(

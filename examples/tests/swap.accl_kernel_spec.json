@@ -1,0 +1,7 @@
+{
+  "gm_inputs": 2,
+  "input_init": "h_x[i] = static_cast<float>(i); h_y[i] = static_cast<float>(i) * 2.0f + 1.0f;",
+  "element_op_code": "float a = x_val; float b = y_val; ascend::std::swap(a, b); z_val = a;",
+  "golden_code": "expected = y_ref;",
+  "notes": "In-place void op. We copy x_val,y_val into locals a,b, call swap(a,b), then output a. After a correct swap, a holds y's original value, so the independent golden is simply expected = y_ref (no ascend::std). This verifies swap actually exchanged the operands rather than smuggling in a value-returning signature."
+}

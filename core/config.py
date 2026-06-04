@@ -1,4 +1,4 @@
-"""配置系统（cccl-to-accl-v3 的核心改进）。
+"""配置系统（ASC_agent / cccl-to-accl-v3 的核心改进）。
 
 设计目标：彻底消除 v2 里的硬编码（conda 路径、用户目录、工具版本、
 hook 检查文案、__cccl→__accl 这种隐式重命名等）。
@@ -33,7 +33,7 @@ _ENV_PATTERN = re.compile(r"\$\{([^{}]+)\}")
 # 内置默认配置：用户的 settings.yaml 只需覆盖关心的字段
 # --------------------------------------------------------------------------- #
 DEFAULTS: dict[str, Any] = {
-    "project": {"name": "cccl-to-accl-v3"},
+    "project": {"name": "ASC_agent"},
     "paths": {
         # 源仓库（CCCL）：默认放在项目内 repos/cccl，可用 CCCL_REPO 覆盖
         "cccl_repo": "${CCCL_REPO:-${PROJECT_ROOT}/repos/cccl}",
@@ -48,6 +48,10 @@ DEFAULTS: dict[str, Any] = {
     "mapping": {
         "source_repo_prefix": "libcudacxx/include/cuda/std",
         "target_repo_prefix": "libascendcxx/include/ascend/std",
+        # CCCL 侧测试树（与真实 libcudacxx 一致）。算子头 <op>.h 的测试源约定为
+        # <cccl_test_prefix>/<同样的子路径段>/<op>.pass.cpp。用于「同步迁移测试代码」。
+        "cccl_test_prefix": "libcudacxx/test/std",
+        "cccl_test_suffix": ".pass.cpp",
         # 对相对路径里的每一段做替换，例如 __cccl -> __accl
         # 这正是 v2 缺失、导致 header guard 与示例对不上的地方
         "segment_substitutions": [
@@ -104,12 +108,26 @@ DEFAULTS: dict[str, Any] = {
     },
     "examples": {
         "example_1": {
-            "cccl": "${PROJECT_ROOT}/examples/example1_cccl.h",
-            "accl": "${PROJECT_ROOT}/examples/example1_accl.h",
+            "cccl": "${PROJECT_ROOT}/examples/headers/max.cccl.h",
+            "accl": "${PROJECT_ROOT}/examples/headers/max.accl.h",
         },
         "example_2": {
-            "cccl": "${PROJECT_ROOT}/examples/example2_cccl.h",
-            "accl": "${PROJECT_ROOT}/examples/example2_accl.h",
+            "cccl": "${PROJECT_ROOT}/examples/headers/os.cccl.h",
+            "accl": "${PROJECT_ROOT}/examples/headers/os.accl.h",
+        },
+    },
+    # 测试迁移的成功示例对（CCCL 测试 → ACCL host 测试 + kernel_spec）。
+    # 各覆盖一种算子形态：example_1=二元返回值(max)，example_2=原地 void(swap)。
+    "test_examples": {
+        "example_1": {
+            "cccl_test": "${PROJECT_ROOT}/examples/tests/max.cccl.pass.cpp",
+            "accl_host": "${PROJECT_ROOT}/examples/tests/max.accl_host.cpp",
+            "accl_kernel_spec": "${PROJECT_ROOT}/examples/tests/max.accl_kernel_spec.json",
+        },
+        "example_2": {
+            "cccl_test": "${PROJECT_ROOT}/examples/tests/swap.cccl.pass.cpp",
+            "accl_host": "${PROJECT_ROOT}/examples/tests/swap.accl_host.cpp",
+            "accl_kernel_spec": "${PROJECT_ROOT}/examples/tests/swap.accl_kernel_spec.json",
         },
     },
     # 模型输出归一化开关（v2 里是写死的三条正则）
@@ -318,6 +336,14 @@ class Config:
         return self.raw["mapping"].get("segment_substitutions", [])
 
     @property
+    def cccl_test_prefix(self) -> str:
+        return self.raw["mapping"].get("cccl_test_prefix", "libcudacxx/test/std")
+
+    @property
+    def cccl_test_suffix(self) -> str:
+        return self.raw["mapping"].get("cccl_test_suffix", ".pass.cpp")
+
+    @property
     def module_hint_fallback(self) -> str:
         return self.raw["mapping"].get("module_hint_fallback", "generic")
 
@@ -376,6 +402,9 @@ class Config:
 
     def example_paths(self) -> dict:
         return self.raw["examples"]
+
+    def test_example_paths(self) -> dict:
+        return self.raw.get("test_examples", {})
 
     # ----- shell 构造（统一加 conda 前缀 + 安全转义） ----- #
     def build_shell_script(self, body: str, cd_repo: bool = True) -> str:

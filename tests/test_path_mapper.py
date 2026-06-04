@@ -8,11 +8,13 @@ from core.path_mapper import (
     apply_segment_substitutions,
     expected_guard_from_relpath,
     infer_module_hint,
+    map_cccl_test_path,
     map_target_relpath,
 )
 
 SRC = "libcudacxx/include/cuda/std"
 TGT = "libascendcxx/include/ascend/std"
+TEST_PREFIX = "libcudacxx/test/std"
 SUBS = [{"from": "__cccl", "to": "__accl"}]
 
 
@@ -72,6 +74,18 @@ def test_guard_matches_example_algorithm_wrapper():
     rel = map_target_relpath(p, SRC, TGT, SUBS)
     guard = expected_guard_from_relpath(rel)
     assert guard == "LIBASCENDCXX_INCLUDE_ASCEND_STD___ACCL_ALGORITHM_WRAPPER_H_"
+
+
+def test_map_cccl_test_path_parallel_tree():
+    # 算子头 -> 平行 test 树下的 .pass.cpp，子路径段保持不变。
+    p = Path("/x/repos/cccl/libcudacxx/include/cuda/std/__algorithm/swap.h")
+    tp = map_cccl_test_path(p, SRC, TEST_PREFIX, ".pass.cpp")
+    assert tp == "/x/repos/cccl/libcudacxx/test/std/__algorithm/swap.pass.cpp"
+
+
+def test_map_cccl_test_path_rejects_bad_prefix():
+    with pytest.raises(ValueError):
+        map_cccl_test_path(Path("/nope/foo.h"), SRC, TEST_PREFIX, ".pass.cpp")
 
 
 def test_guard_without_substitution_keeps_cccl():

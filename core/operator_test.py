@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shlex
 import shutil
@@ -11,6 +13,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from core.config import Config
+from core.operator_kernel_scaffold import (
+    KERNEL_PASS_MARKER,
+    KERNEL_SOC_VERSION,
+    KernelScaffoldBuilder,
+)
 from core.utils import save_text
 
 
@@ -48,10 +55,13 @@ class OperatorTestRunner:
         kernel_timeout_sec: int | None = None,
         host_timeout_sec: int | None = None,
         fast_kernel: bool | None = None,
+        kernel_print_samples: int | None = None,
     ):
         self.config = config
         self.verbose = verbose
         self.dry_run = dry_run
+        # kernel 逐元素打印条数（None=用 main.cpp 默认 8；负数=全部）。
+        self._kernel_print_samples = kernel_print_samples
 
         # 超时与快速档：显式参数优先，否则回退到 config（再回退到内置默认）。
         self._kernel_timeout = (
@@ -176,246 +186,85 @@ class OperatorTestRunner:
             body = (
                 "int main()\n"
                 "{\n"
-                "    // Auto-generated smoke test.\n"
-                "    // If this operator needs different signature/types, edit this file.\n"
+                "    // Auto-generated SMOKE test: compile/instantiate only.\n"
+                "    // No independent oracle for this operator here, so a pass means it builds\n"
+                "    // and the call instantiates, NOT that its semantics are verified.\n"
+                "    // Provide a model-migrated host test for real semantic checks.\n"
+                f'    std::cout << "[host][{algo}][SMOKE-ONLY] compile/instantiate smoke; '
+                'semantic check skipped" << std::endl;\n'
                 f"    auto out = ascend::std::{algo}(1.0f, 2.0f);\n"
                 "    (void)out;\n"
                 "    return 0;\n"
                 "}\n"
             )
-        return f'#include "{include_path}"\n#include <cassert>\n\n{body}'
+        return f'#include "{include_path}"\n#include <cassert>\n#include <iostream>\n\n{body}'
+
+    KERNEL_SOC_VERSION = KERNEL_SOC_VERSION
+    KERNEL_PASS_MARKER = KERNEL_PASS_MARKER
 
     @staticmethod
-    def _kernel_host_h(algo: str) -> str:
-        guard = f"LIBASCENDCXX_TEST_LIBASCENDCXX_ASCEND_KERNEL_{algo.upper()}_EXAMPLE_HOST_H_"
-        return (
-            f"#ifndef {guard}\n"
-            f"#define {guard}\n\n"
-            "#include <cstdint>\n\n"
-            f"void ascend_std_{algo}_do(uint32_t core_num, void* stream, uint8_t* x_dev, uint8_t* y_dev, uint8_t* z_dev);\n\n"
-            f"#endif  // {guard}\n"
-        )
+    def _kernel_io_shape(kernel_spec: dict | None = None) -> tuple[int, int]:
+        return KernelScaffoldBuilder.io_shape(kernel_spec)
 
     @staticmethod
-    def _kernel_host_cpp(algo: str) -> str:
-        return (
-            '#include "host.h"\n\n'
-            f'extern "C" void aclrtlaunch_{algo}_kernel(uint32_t core_num, void* stream, void* x, void* y, void* z);\n\n'
-            f"void ascend_std_{algo}_do(uint32_t core_num, void* stream, uint8_t* x_dev, uint8_t* y_dev, uint8_t* z_dev)\n"
-            "{\n"
-            f"    aclrtlaunch_{algo}_kernel(core_num, stream, x_dev, y_dev, z_dev);\n"
-            "}\n"
-        )
+    def _kernel_arg_decls(gm_inputs: int, gm_outputs: int, typ: str = "GM_ADDR") -> list[str]:
+        return KernelScaffoldBuilder.kernel_arg_decls(gm_inputs, gm_outputs, typ=typ)
 
-    # kernel 仿真 workload 档位。fast：1 核 × 1 tile × 64 = 64 元素，camodel
-    # 数十秒可完成（CI/冒烟）；full：8 核 × 32 tile × 64 = 16384 元素（最终验证，
-    # 与 mylearn 同量级）。文件里写入 `auto-workload=<tag>` 标记，便于切档时识别重生成。
+    @staticmethod
+    def _host_arg_decls(gm_inputs: int, gm_outputs: int) -> list[str]:
+        return KernelScaffoldBuilder.host_arg_decls(gm_inputs, gm_outputs)
+
+    @staticmethod
+    def _launch_arg_decls(gm_inputs: int, gm_outputs: int) -> list[str]:
+        return KernelScaffoldBuilder.launch_arg_decls(gm_inputs, gm_outputs)
+
+    @staticmethod
+    def _host_launch_args(gm_inputs: int, gm_outputs: int) -> list[str]:
+        return KernelScaffoldBuilder.host_launch_args(gm_inputs, gm_outputs)
+
+    @staticmethod
+    def _kernel_host_h(algo: str, gm_inputs: int = 2, gm_outputs: int = 1) -> str:
+        return KernelScaffoldBuilder.host_h(algo, gm_inputs, gm_outputs)
+
+    @staticmethod
+    def _kernel_host_cpp(algo: str, gm_inputs: int = 2, gm_outputs: int = 1) -> str:
+        return KernelScaffoldBuilder.host_cpp(algo, gm_inputs, gm_outputs)
+
     @staticmethod
     def _kernel_workload(fast: bool) -> dict:
-        if fast:
-            return {"tag": "fast", "core_num": 1, "tile_num": 1, "tile_size": 64}
-        return {"tag": "full", "core_num": 8, "tile_num": 32, "tile_size": 64}
+        return KernelScaffoldBuilder.workload(fast)
 
     @classmethod
-    def _kernel_cpp(cls, algo: str, include_path: str, fast: bool = False) -> str:
-        w = cls._kernel_workload(fast)
-        total_length = w["core_num"] * w["tile_num"] * w["tile_size"]
-        return (
-            f"// auto-workload={w['tag']} (n={total_length}, cores={w['core_num']}, "
-            f"tiles={w['tile_num']}x{w['tile_size']})\n"
-            '#include "kernel_operator.h"\n'
-            f'#include "{include_path}"\n\n'
-            f'extern "C" __global__ __aicore__ void {algo}_kernel(GM_ADDR x_gm, GM_ADDR y_gm, GM_ADDR z_gm)\n'
-            "{\n"
-            f"    constexpr int32_t TOTAL_LENGTH = {total_length};\n"
-            f"    constexpr int32_t CORE_NUM = {w['core_num']};\n"
-            "    constexpr int32_t BLOCK_LENGTH = TOTAL_LENGTH / CORE_NUM;\n"
-            f"    constexpr int32_t TILE_NUM = {w['tile_num']};\n"
-            f"    constexpr int32_t TILE_SIZE = {w['tile_size']};\n\n"
-            "    uint32_t block_id = AscendC::GetBlockIdx();\n\n"
-            "    AscendC::GlobalTensor<float> xGm, yGm, zGm;\n"
-            "    xGm.SetGlobalBuffer((__gm__ float*)(x_gm) + block_id * BLOCK_LENGTH, BLOCK_LENGTH);\n"
-            "    yGm.SetGlobalBuffer((__gm__ float*)(y_gm) + block_id * BLOCK_LENGTH, BLOCK_LENGTH);\n"
-            "    zGm.SetGlobalBuffer((__gm__ float*)(z_gm) + block_id * BLOCK_LENGTH, BLOCK_LENGTH);\n\n"
-            "    AscendC::TQue<AscendC::TPosition::VECIN, 1> inQueueX, inQueueY;\n"
-            "    AscendC::TQue<AscendC::TPosition::VECOUT, 1> outQueueZ;\n\n"
-            "    AscendC::TPipe pipe;\n"
-            "    pipe.InitBuffer(inQueueX, 1, TILE_SIZE * sizeof(float));\n"
-            "    pipe.InitBuffer(inQueueY, 1, TILE_SIZE * sizeof(float));\n"
-            "    pipe.InitBuffer(outQueueZ, 1, TILE_SIZE * sizeof(float));\n\n"
-            "    for (int32_t tile = 0; tile < TILE_NUM; ++tile) {\n"
-            "        auto xBuf = inQueueX.AllocTensor<float>();\n"
-            "        auto yBuf = inQueueY.AllocTensor<float>();\n"
-            "        AscendC::DataCopy(xBuf, xGm[tile * TILE_SIZE], TILE_SIZE);\n"
-            "        AscendC::DataCopy(yBuf, yGm[tile * TILE_SIZE], TILE_SIZE);\n"
-            "        inQueueX.EnQue(xBuf);\n"
-            "        inQueueY.EnQue(yBuf);\n\n"
-            "        auto xLocal = inQueueX.DeQue<float>();\n"
-            "        auto yLocal = inQueueY.DeQue<float>();\n"
-            "        auto zLocal = outQueueZ.AllocTensor<float>();\n\n"
-            "        for (int32_t i = 0; i < TILE_SIZE; ++i) {\n"
-            "            float x_val = xLocal.GetValue(i);\n"
-            "            float y_val = yLocal.GetValue(i);\n"
-            f"            float z_val = ascend::std::{algo}(x_val, y_val);\n"
-            "            zLocal.SetValue(i, z_val);\n"
-            "        }\n\n"
-            "        outQueueZ.EnQue(zLocal);\n"
-            "        inQueueX.FreeTensor(xLocal);\n"
-            "        inQueueY.FreeTensor(yLocal);\n\n"
-            "        auto zBuf = outQueueZ.DeQue<float>();\n"
-            "        AscendC::DataCopy(zGm[tile * TILE_SIZE], zBuf, TILE_SIZE);\n"
-            "        outQueueZ.FreeTensor(zBuf);\n"
-            "    }\n"
-            "}\n"
-        )
+    def _kernel_cpp(
+        cls, algo: str, include_path: str, fast: bool = False, kernel_spec: dict | None = None
+    ) -> str:
+        return KernelScaffoldBuilder.kernel_cpp(algo, include_path, fast, kernel_spec)
 
     @classmethod
-    def _kernel_main_cpp(cls, algo: str, include_path: str, fast: bool = False) -> str:
-        w = cls._kernel_workload(fast)
-        total_length = w["core_num"] * w["tile_num"] * w["tile_size"]
-        return (
-            f"// auto-workload={w['tag']} (n={total_length}, cores={w['core_num']})\n"
-            '#include "acl/acl.h"\n'
-            '#include "host.h"\n'
-            f'#include "{include_path}"\n'
-            "#include <cmath>\n"
-            "#include <iostream>\n"
-            "#include <vector>\n\n"
-            "#define CHECK_ACL(call)                                                                   \\\n"
-            "    do {                                                                                  \\\n"
-            "        aclError err = call;                                                              \\\n"
-            "        if (err != ACL_SUCCESS) {                                                         \\\n"
-            '            std::cerr << "ACL error: " << err << " at " << __FILE__ << ":" << __LINE__ \\\n'
-            '                      << std::endl;                                                       \\\n'
-            "            return 1;                                                                      \\\n"
-            "        }                                                                                  \\\n"
-            "    } while (0)\n\n"
-            "int main()\n"
-            "{\n"
-            f"    const size_t n = {total_length};\n"
-            "    const size_t bytes = n * sizeof(float);\n\n"
-            "    CHECK_ACL(aclInit(nullptr));\n"
-            "    CHECK_ACL(aclrtSetDevice(0));\n\n"
-            "    void* stream = nullptr;\n"
-            "    CHECK_ACL(aclrtCreateStream(&stream));\n\n"
-            "    std::vector<float> h_x(n), h_y(n), h_z(n);\n"
-            "    for (size_t i = 0; i < n; ++i) {\n"
-            "        h_x[i] = static_cast<float>(i);\n"
-            "        h_y[i] = static_cast<float>(i * 2);\n"
-            "    }\n\n"
-            "    void *d_x = nullptr, *d_y = nullptr, *d_z = nullptr;\n"
-            "    CHECK_ACL(aclrtMalloc(&d_x, bytes, ACL_MEM_MALLOC_HUGE_FIRST));\n"
-            "    CHECK_ACL(aclrtMalloc(&d_y, bytes, ACL_MEM_MALLOC_HUGE_FIRST));\n"
-            "    CHECK_ACL(aclrtMalloc(&d_z, bytes, ACL_MEM_MALLOC_HUGE_FIRST));\n\n"
-            "    CHECK_ACL(aclrtMemcpy(d_x, bytes, h_x.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));\n"
-            "    CHECK_ACL(aclrtMemcpy(d_y, bytes, h_y.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));\n\n"
-            f"    ascend_std_{algo}_do({w['core_num']}, stream, static_cast<uint8_t*>(d_x), static_cast<uint8_t*>(d_y), static_cast<uint8_t*>(d_z));\n"
-            "    CHECK_ACL(aclrtSynchronizeStream(stream));\n"
-            "    CHECK_ACL(aclrtMemcpy(h_z.data(), bytes, d_z, bytes, ACL_MEMCPY_DEVICE_TO_HOST));\n\n"
-            "    constexpr float eps = 1e-5f;\n"
-            "    for (size_t i = 0; i < n; ++i) {\n"
-            f"        float expected = ascend::std::{algo}(h_x[i], h_y[i]);\n"
-            "        if (std::abs(h_z[i] - expected) > eps) {\n"
-            '            std::cerr << "Mismatch at i=" << i << ", got=" << h_z[i]\n'
-            '                      << ", expected=" << expected << std::endl;\n'
-            "            return 2;\n"
-            "        }\n"
-            "    }\n\n"
-            "    aclrtFree(d_x);\n"
-            "    aclrtFree(d_y);\n"
-            "    aclrtFree(d_z);\n"
-            "    aclrtDestroyStream(stream);\n"
-            "    aclrtResetDevice(0);\n"
-            "    aclFinalize();\n\n"
-            '    std::cout << "kernel simulation verification passed." << std::endl;\n'
-            "    return 0;\n"
-            "}\n"
-        )
+    def _kernel_main_cpp(
+        cls, algo: str, include_path: str, fast: bool = False, kernel_spec: dict | None = None
+    ) -> str:
+        return KernelScaffoldBuilder.main_cpp(algo, include_path, fast, kernel_spec)
 
-    # cannsim `-s Ascend950` 对应的 SOC_VERSION 变体。
-    # mylearn(alpha.1)叫 Ascend910_9599；新版 CANN(9.0.0 master)把同一颗 9599
-    # 芯片改名为 Ascend950PR_9599——cmake 会 TOLOWER 后比对支持列表，旧名已不在表里。
-    # 换 toolkit 时只需改这一处（host_config.cmake 的支持列表决定可选值）。
-    KERNEL_SOC_VERSION = "Ascend950PR_9599"
+    @staticmethod
+    def _kernel_output_check_block(
+        algo: str,
+        *,
+        output_index: int,
+        gm_inputs: int,
+        single_output: bool,
+    ) -> str:
+        return KernelScaffoldBuilder.output_check_block(
+            algo, output_index=output_index, gm_inputs=gm_inputs, single_output=single_output
+        )
 
     @classmethod
     def _kernel_cmakelists(cls) -> str:
-        return (
-            "cmake_minimum_required(VERSION 3.16)\n"
-            "project(Ascend_c)\n\n"
-            f'set(SOC_VERSION "{cls.KERNEL_SOC_VERSION}" CACHE STRING "system on chip type")\n'
-            "set(ASCEND_CANN_PACKAGE_PATH $ENV{ASCEND_HOME_PATH}\n"
-            '    CACHE STRING "ASCEND CANN package installation directory"\n'
-            ")\n"
-            "if(NOT CMAKE_BUILD_TYPE)\n"
-            '    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type Release/Debug (default Debug)" FORCE)\n'
-            "endif()\n\n"
-            "file(GLOB KERNEL_FILES ${CMAKE_CURRENT_SOURCE_DIR}/kernel.cpp)\n\n"
-            "include(cmake/npu_lib.cmake)\n"
-            "add_executable(ascendc_kernels_bbit ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ${CMAKE_CURRENT_SOURCE_DIR}/host.cpp)\n\n"
-            "target_compile_options(ascendc_kernels_bbit PRIVATE\n"
-            "    -O2 -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0 -Wall -Werror\n"
-            ")\n"
-            "target_link_libraries(ascendc_kernels_bbit PRIVATE\n"
-            "    host_intf_pub\n"
-            "    ascendc_kernels_npu\n"
-            ")\n"
-            "install(TARGETS ascendc_kernels_bbit\n"
-            "    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}\n"
-            "    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}\n"
-            "    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}\n"
-            ")\n"
-        )
-
-    # 与 mylearn 的 max_example/run_test.sh 一致：先准备 CANN 环境，再
-    # 对每一步（cmake/make/cannsim）做显式失败检查，任何一步失败立即 exit 1。
-    # 末尾仅在全部成功时才打印 PASS 标记（KERNEL_SIM_RESULT: PASS）。
-    KERNEL_PASS_MARKER = "KERNEL_SIM_RESULT: PASS"
+        return KernelScaffoldBuilder.cmakelists()
 
     @classmethod
     def _kernel_run_test_sh(cls, algo: str) -> str:
-        return (
-            "#!/bin/bash\n"
-            f"# Kernel simulation test for {algo}.\n"
-            "# 保持与 mylearn max_example/run_test.sh 一致的环境与失败处理。\n\n"
-            "# --- Ascend / CANN 环境（与 mylearn 一致）---\n"
-            'if [ -z "$ASCEND_HOME_PATH" ]; then\n'
-            '    if [ -f "/usr/local/Ascend/cann/set_env.sh" ]; then\n'
-            "        source /usr/local/Ascend/cann/set_env.sh\n"
-            '    elif [ -f "/usr/local/Ascend/ascend-toolkit/set_env.sh" ]; then\n'
-            "        source /usr/local/Ascend/ascend-toolkit/set_env.sh\n"
-            "    fi\n"
-            "fi\n"
-            'if [ -d "/usr/local/Ascend/cann/x86_64-linux/lib64" ]; then\n'
-            '    export LD_LIBRARY_PATH="/usr/local/Ascend/cann/x86_64-linux/lib64:$LD_LIBRARY_PATH"\n'
-            "fi\n\n"
-            "set -e  # Exit on any error\n\n"
-            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
-            'PROJECT_ROOT="$SCRIPT_DIR/../../../../.."\n'
-            'SRC_INCLUDE_DIR="$PROJECT_ROOT/include/ascend"\n'
-            'DST_KERNEL_SYMLINK="$SCRIPT_DIR/ascend"\n\n'
-            'if [ ! -d "$SRC_INCLUDE_DIR" ]; then\n'
-            '    echo "ERROR: source header dir not found: $SRC_INCLUDE_DIR"\n'
-            "    exit 1\n"
-            "fi\n\n"
-            'ln -sfn "$SRC_INCLUDE_DIR" "$DST_KERNEL_SYMLINK"\n'
-            'rm -rf "$SCRIPT_DIR/build"\n'
-            'mkdir -p "$SCRIPT_DIR/build"\n'
-            'cd "$SCRIPT_DIR/build"\n'
-            'export CPLUS_INCLUDE_PATH="$SCRIPT_DIR:$CPLUS_INCLUDE_PATH"\n\n'
-            'cmake .. || { echo "ERROR: CMake configure failed"; rm -f "$DST_KERNEL_SYMLINK"; exit 1; }\n'
-            'make -j"$(nproc)" || { echo "ERROR: build failed"; rm -f "$DST_KERNEL_SYMLINK"; exit 1; }\n\n'
-            'rm -f "$DST_KERNEL_SYMLINK"\n'
-            'export LD_LIBRARY_PATH="$PWD/lib:$LD_LIBRARY_PATH"\n\n'
-            "if ! command -v cannsim &> /dev/null; then\n"
-            '    echo "ERROR: cannsim command not found. Please install/enable the CANN simulator."\n'
-            "    exit 1\n"
-            "fi\n\n"
-            "cannsim record ./ascendc_kernels_bbit -s Ascend950 --gen-report \\\n"
-            '    || { echo "ERROR: cannsim simulation failed"; exit 1; }\n\n'
-            f'echo "kernel simulation for {algo} finished."\n'
-            f'echo "{cls.KERNEL_PASS_MARKER}"\n'
-        )
+        return KernelScaffoldBuilder.run_test_sh(algo)
 
     def _copy_kernel_cmake_template(self, kernel_dir: Path) -> None:
         src = self._kernel_root / "max_example" / "cmake"
@@ -426,7 +275,20 @@ class OperatorTestRunner:
             raise FileNotFoundError(f"缺少 kernel cmake 模板目录: {src}")
         shutil.copytree(src, dst)
 
-    def prepare_tests(self, target_relpath: str, overwrite: bool = False) -> OperatorTestResult:
+    def prepare_tests(
+        self,
+        target_relpath: str,
+        overwrite: bool = False,
+        *,
+        host_test_code: str | None = None,
+        kernel_spec: dict | None = None,
+    ) -> OperatorTestResult:
+        """生成 host/kernel 测试脚手架。
+
+        - host_test_code/kernel_spec 由模型迁移产出（core/test_migrator）：
+          提供时即写入对应文件（视为最新产物，强制覆盖），算子相关部分不再走写死模板。
+        - 都不提供时（离线/mock/legacy）回退到内置二元模板，保持既有行为。
+        """
         result = OperatorTestResult(target_relpath=target_relpath)
         result.algo_name = self.algo_name_from_target_relpath(target_relpath)
         result.include_path = self.include_path_from_target_relpath(target_relpath)
@@ -438,32 +300,58 @@ class OperatorTestRunner:
         kernel_dir = self._kernel_root / f"{result.algo_name}_example"
         kernel_dir.mkdir(parents=True, exist_ok=True)
 
-        self._write_if_needed(
-            host_file,
-            self._host_test_code(result.algo_name, result.include_path),
-            overwrite=overwrite,
-        )
+        if host_test_code and host_test_code.strip():
+            # 模型迁移的 host 测试：直接写入（最新产物，覆盖旧文件）。
+            save_text(host_file, host_test_code if host_test_code.endswith("\n") else host_test_code + "\n")
+        else:
+            self._write_if_needed(
+                host_file,
+                self._host_test_code(result.algo_name, result.include_path),
+                overwrite=overwrite,
+            )
         result.host_prepared = True
         result.host_test_file = str(host_file)
 
         self._copy_kernel_cmake_template(kernel_dir)
         self._write_if_needed(kernel_dir / "CMakeLists.txt", self._kernel_cmakelists(), overwrite=overwrite)
-        self._write_if_needed(kernel_dir / "host.h", self._kernel_host_h(result.algo_name), overwrite=overwrite)
-        self._write_if_needed(kernel_dir / "host.cpp", self._kernel_host_cpp(result.algo_name), overwrite=overwrite)
         fast = self._fast_kernel
         tag = self._kernel_workload(fast)["tag"]
-        self._write_workload_if_needed(
-            kernel_dir / "kernel.cpp",
-            self._kernel_cpp(result.algo_name, result.include_path, fast),
-            overwrite=overwrite,
-            tag=tag,
-        )
-        self._write_workload_if_needed(
-            kernel_dir / "main.cpp",
-            self._kernel_main_cpp(result.algo_name, result.include_path, fast),
-            overwrite=overwrite,
-            tag=tag,
-        )
+        spec = kernel_spec if (kernel_spec and kernel_spec.get("element_op_code")) else None
+        gm_inputs, gm_outputs = self._kernel_io_shape(spec)
+        if spec is not None:
+            # IO shape is part of the migrated kernel contract, so host glue must
+            # be regenerated together with kernel.cpp/main.cpp.
+            save_text(kernel_dir / "host.h", self._kernel_host_h(result.algo_name, gm_inputs, gm_outputs))
+            save_text(kernel_dir / "host.cpp", self._kernel_host_cpp(result.algo_name, gm_inputs, gm_outputs))
+        else:
+            self._write_if_needed(
+                kernel_dir / "host.h",
+                self._kernel_host_h(result.algo_name, gm_inputs, gm_outputs),
+                overwrite=overwrite,
+            )
+            self._write_if_needed(
+                kernel_dir / "host.cpp",
+                self._kernel_host_cpp(result.algo_name, gm_inputs, gm_outputs),
+                overwrite=overwrite,
+            )
+        # 有模型 spec 时强制覆盖 kernel.cpp/main.cpp（最新产物）；否则保留 fast/full 档位逻辑。
+        if spec is not None:
+            save_text(kernel_dir / "kernel.cpp", self._kernel_cpp(result.algo_name, result.include_path, fast, spec))
+            save_text(kernel_dir / "main.cpp", self._kernel_main_cpp(result.algo_name, result.include_path, fast, spec))
+            save_text(kernel_dir / "kernel_spec.json", json.dumps(spec, ensure_ascii=False, indent=2))
+        else:
+            self._write_workload_if_needed(
+                kernel_dir / "kernel.cpp",
+                self._kernel_cpp(result.algo_name, result.include_path, fast),
+                overwrite=overwrite,
+                tag=tag,
+            )
+            self._write_workload_if_needed(
+                kernel_dir / "main.cpp",
+                self._kernel_main_cpp(result.algo_name, result.include_path, fast),
+                overwrite=overwrite,
+                tag=tag,
+            )
         run_sh = kernel_dir / "run_test.sh"
         self._write_if_needed(run_sh, self._kernel_run_test_sh(result.algo_name), overwrite=overwrite)
         # 无条件规整为 LF：哪怕脚本是旧的 CRLF 文件且本次未重写，也要修好，
@@ -488,10 +376,12 @@ class OperatorTestRunner:
         return value
 
     def _run_bash(
-        self, script: str, cwd: Path, timeout: int | None = None
+        self, script: str, cwd: Path, timeout: int | None = None,
+        env_extra: dict | None = None,
     ) -> subprocess.CompletedProcess | None:
         if self.dry_run:
             return None
+        run_env = {**os.environ, **env_extra} if env_extra else None
         try:
             return subprocess.run(
                 ["bash", "-lc", script],
@@ -499,6 +389,7 @@ class OperatorTestRunner:
                 text=True,
                 cwd=str(cwd),
                 timeout=timeout,
+                env=run_env,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -512,6 +403,7 @@ class OperatorTestRunner:
         cwd: Path,
         log_path: Path,
         timeout: int | None = None,
+        env_extra: dict | None = None,
     ) -> tuple[bool, str]:
         shown = f"(cd {cwd} && bash -lc {shlex.quote(cmd)})"
         result.commands.append(shown)
@@ -520,7 +412,7 @@ class OperatorTestRunner:
             return False, str(log_path)
 
         try:
-            done = self._run_bash(cmd, cwd=cwd, timeout=timeout)
+            done = self._run_bash(cmd, cwd=cwd, timeout=timeout, env_extra=env_extra)
         except subprocess.TimeoutExpired as exc:
             # 超时不再当成崩溃：落盘已捕获的部分输出 + 明确标注，按失败处理。
             text = (
@@ -587,7 +479,14 @@ class OperatorTestRunner:
         result.host_passed = passed
         result.host_log_path = log
 
+    def _kernel_env_extra(self) -> dict | None:
+        """把 kernel 逐元素打印条数透传给 main.cpp（环境变量 KERNEL_PRINT_SAMPLES）。"""
+        if self._kernel_print_samples is None:
+            return None
+        return {"KERNEL_PRINT_SAMPLES": str(int(self._kernel_print_samples))}
+
     def run_kernel_test(self, result: OperatorTestResult, kernel_mode: str = "run_test") -> None:
+        env_extra = self._kernel_env_extra()
         if kernel_mode == "run_test":
             kernel_dir = self._kernel_root / f"{result.algo_name}_example"
             # 执行前再保险一次：把脚本规整为 LF，避免 CRLF 让 `set -e` 失效。
@@ -599,6 +498,7 @@ class OperatorTestRunner:
                 cwd=kernel_dir,
                 log_path=self._outputs / f"kernel_test_{result.algo_name}.log",
                 timeout=self._kernel_timeout,
+                env_extra=env_extra,
             )
             # 关键修复：不只看退出码，必须命中真正的 PASS 标记且无失败特征，
             # 否则脚本末尾那句无条件 echo 会把失败误报成通过。
@@ -619,6 +519,7 @@ class OperatorTestRunner:
                 cwd=self._libascendcxx,
                 log_path=self._outputs / f"kernel_test_{result.algo_name}.log",
                 timeout=self._kernel_timeout,
+                env_extra=env_extra,
             )
         else:
             raise ValueError(f"未知 kernel_mode: {kernel_mode}")
@@ -636,9 +537,16 @@ class OperatorTestRunner:
         kernel_mode: str = "run_test",
         prepare_only: bool = False,
         overwrite: bool = False,
+        host_test_code: str | None = None,
+        kernel_spec: dict | None = None,
     ) -> OperatorTestResult:
         try:
-            result = self.prepare_tests(target_relpath, overwrite=overwrite)
+            result = self.prepare_tests(
+                target_relpath,
+                overwrite=overwrite,
+                host_test_code=host_test_code,
+                kernel_spec=kernel_spec,
+            )
 
             if prepare_only:
                 return result

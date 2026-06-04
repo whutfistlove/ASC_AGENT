@@ -1,1 +1,1 @@
-"""cccl-to-accl-v3 core package."""
+"""ASC_agent core package."""

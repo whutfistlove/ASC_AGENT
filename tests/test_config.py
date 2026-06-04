@@ -74,7 +74,7 @@ def test_load_overrides(tmp_path):
 def test_project_root_expanded_in_examples(tmp_path):
     cfg = Config.load(None, project_root=tmp_path)
     e1 = cfg.example_paths()["example_1"]["cccl"]
-    assert e1 == str((tmp_path / "examples" / "example1_cccl.h"))
+    assert e1 == str((tmp_path / "examples" / "headers" / "max.cccl.h"))
 
 
 def test_validate_rejects_zero_rounds(tmp_path):

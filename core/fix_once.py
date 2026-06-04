@@ -14,6 +14,7 @@ from core.model_client import (
     extract_json_object,
     normalize_generated_text,
 )
+from core.test_migrator import validate_host_test_code, validate_kernel_spec
 from core.utils import save_text, call_model_with_io
 
 
@@ -232,3 +233,143 @@ def run_test_feedback_fix(
     save_text(fixed_path, rewritten_code)
     save_text(output_dir / f"fix_notes_test_round{round_index}.md", notes)
     return fixed_path, rewritten_code
+
+
+def build_test_artifact_fix_request(
+    *,
+    target_relpath: str,
+    expected_header_guard: str,
+    header_text: str,
+    host_test_text: str,
+    kernel_spec_json: str,
+    test_feedback_text: str,
+) -> str:
+    return f"""【目标相对路径 target_relpath】
+{target_relpath}
+
+【expected_header_guard】
+{expected_header_guard}
+
+【当前 ACCL 算子头文件（header_code 基线）】
+{header_text}
+
+【当前 ACCL host 测试（host_test_code 基线）】
+{host_test_text}
+
+【当前 kernel_spec(JSON) 基线】
+{kernel_spec_json}
+
+【最新 host/kernel 测试反馈】
+{test_feedback_text}
+
+【本轮修复要求】
+1. 先判定失败根因：算子(operator) / host 测试(host_test) / kernel 测试(kernel_test)。
+2. CCCL/ACCL 算子语义是基准：若失败因测试本身写错（如把 void/原地算子当二元返回值、
+   把右值绑定到非 const 左值引用、把 void 赋给 float），就改测试，绝不为迁就测试而
+   改算子的签名/返回类型/语义。
+3. 只返回需要改动的件：header_code / host_test_code / kernel_spec 任意子集；
+   不需要改的件请省略或置 null。
+4. kernel_spec 可使用 1~8 个 GM 输入和 1~8 个 GM 输出：gm_inputs / gm_outputs /
+   input_init / element_op_code / golden_code。多输出时 element_op_code 应给
+   out0_val...outM_val 赋值，golden_code 应给 expected0...expectedM 赋值；旧的
+   z_val / expected 仍等价于 out0_val / expected0。
+5. kernel_spec 的 golden_code 必须是独立参考实现，禁止调用 ascend::std::*。
+6. 若改 header_code：保持 expected_header_guard 与版权头不变，做最小必要改动。
+7. 若返回 host_test_code：必须让任一用例失败时进程返回非零（例如累计 g_failures，
+   最终 return g_failures == 0 ? 0 : 1），不能只打印 FAIL 后 return 0。
+"""
+
+
+def _optional_text_field(data: dict, *names: str) -> str | None:
+    """读取可省略/可为 null 的模型文本字段；null/空串表示不改。"""
+    for name in names:
+        if name not in data:
+            continue
+        value = data[name]
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"模型输出字段 {name} 必须是字符串或 null")
+        if value.strip():
+            return value
+    return None
+
+
+def run_test_artifact_fix(
+    config: Config,
+    model_client: BaseModelClient,
+    *,
+    target_relpath: str,
+    expected_header_guard: str,
+    header_text: str,
+    host_test_text: str,
+    kernel_spec: dict | None,
+    test_feedback_text: str,
+    round_index: int,
+    prompt_filename: str = "fix_tests_from_log.md",
+    verbose: bool = True,
+    show_model_io: bool = False,
+) -> dict:
+    """测试反馈修复（可同时改 header / host 测试 / kernel_spec）。
+
+    返回字典，仅包含模型本轮决定改动的件（缺省字段表示该件保持不变）：
+        {"header_code"?, "host_test_code"?, "kernel_spec"?, "root_cause", "notes"}
+    """
+    output_dir = config.output_dir
+    spec_json = (
+        json.dumps(kernel_spec, ensure_ascii=False, indent=2)
+        if kernel_spec
+        else "(无 kernel_spec：kernel 测试当前使用内置模板)"
+    )
+    request_text = build_test_artifact_fix_request(
+        target_relpath=target_relpath,
+        expected_header_guard=expected_header_guard,
+        header_text=header_text,
+        host_test_text=host_test_text or "(无 host 测试基线)",
+        kernel_spec_json=spec_json,
+        test_feedback_text=test_feedback_text,
+    )
+    save_text(output_dir / f"fix_request_test_round{round_index}.md", request_text)
+
+    prompt_text = config.skill_path(prompt_filename).read_text(encoding="utf-8")
+    if verbose:
+        print(f"开始调用模型基于测试反馈生成第 {round_index} 轮修复（header/测试）...")
+    raw = call_model_with_io(
+        model_client, stage=f"测试反馈修复 第 {round_index} 轮",
+        system_prompt=prompt_text, user_content=request_text, show_io=show_model_io,
+    )
+    save_text(output_dir / f"fix_model_raw_test_round{round_index}.md", raw)
+
+    data = extract_json_object(raw, strict=True)
+    for field in ("root_cause", "notes"):
+        if field not in data:
+            raise ValueError(f"模型输出 JSON 缺少必要字段: {field}")
+        if not isinstance(data[field], str):
+            raise ValueError(f"模型输出字段 {field} 必须是字符串")
+
+    out: dict = {
+        "root_cause": data["root_cause"].strip(),
+        "notes": data["notes"].strip(),
+    }
+    # header 既接受 header_code，也接受 rewritten_code（本仓库其它提示词通用的键名，
+    # 模型很自然地会用它来回传修好的算子头）。
+    header_code = _optional_text_field(data, "header_code", "rewritten_code")
+    if header_code:
+        out["header_code"] = normalize_generated_text(header_code, config.normalize_options)
+
+    host_code = _optional_text_field(data, "host_test_code")
+    if host_code:
+        out["host_test_code"] = validate_host_test_code(host_code)
+
+    if data.get("kernel_spec") is not None and not isinstance(data.get("kernel_spec"), dict):
+        raise ValueError("模型输出字段 kernel_spec 必须是对象或 null")
+    if isinstance(data.get("kernel_spec"), dict) and data["kernel_spec"]:
+        try:
+            out["kernel_spec"] = validate_kernel_spec(data["kernel_spec"])
+        except ValueError:
+            pass  # 槽位不全的 kernel_spec 忽略，保持上一版
+
+    save_text(output_dir / f"fix_result_test_round{round_index}.json",
+              json.dumps(out, ensure_ascii=False, indent=2))
+    save_text(output_dir / f"fix_notes_test_round{round_index}.md", out["notes"])
+    return out

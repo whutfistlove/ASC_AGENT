@@ -1,8 +1,6 @@
 #!/bin/bash
 # Kernel simulation test for min.
-# 保持与 mylearn max_example/run_test.sh 一致的环境与失败处理。
 
-# --- Ascend / CANN 环境（与 mylearn 一致）---
 if [ -z "$ASCEND_HOME_PATH" ]; then
     if [ -f "/usr/local/Ascend/cann/set_env.sh" ]; then
         source /usr/local/Ascend/cann/set_env.sh
@@ -47,4 +45,24 @@ cannsim record ./ascendc_kernels_bbit -s Ascend950 --gen-report \
     || { echo "ERROR: cannsim simulation failed"; exit 1; }
 
 echo "kernel simulation for min finished."
-echo "KERNEL_SIM_RESULT: PASS"
+
+# cannsim 把被测程序的 stdout 重定向到 build/cannsim_*/cannsim.log。
+# 因此「通过」必须基于程序真实的数值校验(独立 golden 全中)，而不是
+# cannsim 录制成功本身 —— 否则数值算错也会被掩盖成假绿(见问题①)。
+SIM_LOG="$(ls -t "$SCRIPT_DIR"/build/cannsim_*/cannsim.log 2>/dev/null | head -1)"
+if [ -z "$SIM_LOG" ] || [ ! -f "$SIM_LOG" ]; then
+    echo "ERROR: cannsim.log not found; cannot confirm numeric verification"
+    exit 1
+fi
+if grep -qF "Mismatch at" "$SIM_LOG"; then
+    echo "ERROR: kernel numeric mismatch detected in $SIM_LOG"
+    exit 1
+fi
+if grep -qF "kernel simulation verification passed." "$SIM_LOG"; then
+    echo "KERNEL_SIM_RESULT: PASS"
+elif grep -qF "SMOKE-ONLY" "$SIM_LOG"; then
+    echo "KERNEL_SIM_RESULT: SMOKE (no kernel_spec; semantic golden check skipped)"
+else
+    echo "ERROR: kernel verification marker not found in $SIM_LOG"
+    exit 1
+fi

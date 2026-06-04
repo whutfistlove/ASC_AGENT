@@ -16,9 +16,9 @@ def _make_config(tmp_path) -> Config:
     (proj / "skills" / "rewrite_initial.md").write_text("initial prompt", encoding="utf-8")
     (proj / "skills" / "rewrite_fix_from_log.md").write_text("fix prompt", encoding="utf-8")
 
-    ex = proj / "examples"
-    ex.mkdir()
-    for n in ("example1_cccl.h", "example1_accl.h", "example2_cccl.h", "example2_accl.h"):
+    ex = proj / "examples" / "headers"
+    ex.mkdir(parents=True)
+    for n in ("max.cccl.h", "max.accl.h", "os.cccl.h", "os.accl.h"):
         (ex / n).write_text(f"// {n}\n", encoding="utf-8")
 
     cfg = Config.load(None, project_root=proj, overrides={"model": {"provider": "mock"}})

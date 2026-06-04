@@ -289,18 +289,34 @@ def build_model_client(config) -> BaseModelClient:
 # --------------------------------------------------------------------------- #
 # 解析与归一化
 # --------------------------------------------------------------------------- #
-def extract_json_object(text: str) -> dict:
-    """稳健地从模型输出中提取 JSON 对象。"""
+def extract_json_object(text: str, *, strict: bool = False) -> dict:
+    """从模型输出中提取 JSON 对象。
+
+    默认保持历史兼容：允许模型在 JSON 前后夹带少量解释。strict=True 用于
+    已明确要求“只输出 JSON”的链路，任何 Markdown/额外说明都会被拒绝。
+    """
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
-        cleaned = re.sub(r"```$", "", cleaned).strip()
+    if strict:
+        try:
+            obj = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise ValueError("模型输出必须是单个 JSON 对象，不能包含 Markdown 或额外解释") from exc
+        if not isinstance(obj, dict):
+            raise ValueError(f"模型输出 JSON 必须是对象，实际为: {type(obj).__name__}")
+        return obj
+
+    fence = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, flags=re.DOTALL)
+    if fence:
+        cleaned = fence.group(1).strip()
 
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("模型输出中未找到合法 JSON 对象")
-    return json.loads(cleaned[start : end + 1])
+    obj = json.loads(cleaned[start : end + 1])
+    if not isinstance(obj, dict):
+        raise ValueError(f"模型输出 JSON 必须是对象，实际为: {type(obj).__name__}")
+    return obj
 
 
 _DIRECTIVE_RE = re.compile(

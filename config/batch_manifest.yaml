@@ -7,3 +7,11 @@
 inputs:
   - "repos/cccl/libcudacxx/include/cuda/std/__cccl/os.h"
   - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/max.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/swap.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/clamp.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/quad_fanout.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/minmax.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__numeric/gcd.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__numeric/lcm.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__numeric/midpoint.h"
