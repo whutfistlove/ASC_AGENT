@@ -1,0 +1,38 @@
+# *****************************************************************************
+# Copyright (c) 2026 Xiong Shengwu Group at Wuhan University of Technology. All Rights Reserved.
+# Author: Lu Xiongbo <luxiongbo@whut.edu.cn>
+# Create: 2026-01-18
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+repos:
+  # Hook 1: 自动添加版权头（只处理 staged 新文件）
+  - repo: local
+    hooks:
+      - id: add-license-header
+        name: Add Apache 2.0 license header
+        entry: python3 scripts/add_license_header.py
+        language: system
+        files: \.(cpp|cc|cxx|h|hpp|cuh|py|sh|cmake)$|^CMakeLists\.txt$
+        stages: [pre-commit]
+
+  # Hook 2: CANN 风格检查（格式 + lint）
+  - repo: local
+    hooks:
+      - id: cann-style-check
+        name: CANN code style check (clang-format + cpplint)
+        entry: ./scripts/check-style.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

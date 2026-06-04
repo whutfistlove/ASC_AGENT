@@ -1,0 +1,9 @@
+# 真实批量迁移清单（指向项目内置的 CCCL 源仓库 repos/cccl）。
+# inputs 里每个路径都必须落在 mapping.source_repo_prefix（libcudacxx/include/cuda/std）之下。
+#
+# 用法示例：
+#   python main.py batch --manifest config/batch_manifest.yaml --mock
+#   python main.py batch --manifest config/batch_manifest.yaml          # 真实模型 + git 提交检查
+inputs:
+  - "repos/cccl/libcudacxx/include/cuda/std/__cccl/os.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h"

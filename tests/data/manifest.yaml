@@ -1,0 +1,6 @@
+# 批量迁移清单
+# inputs 里每个路径都必须落在 mapping.source_repo_prefix 之下。
+# 这里用项目内置样本，便于离线 selftest / 演示。
+inputs:
+  - "tests/data/repo/libcudacxx/include/cuda/std/__cccl/os.h"
+  - "tests/data/repo/libcudacxx/include/cuda/std/__algorithm/max.h"

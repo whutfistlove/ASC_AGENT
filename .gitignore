@@ -1,0 +1,20 @@
+.env
+__pycache__/
+*.pyc
+
+# pytest / 工具缓存
+.pytest_cache/
+
+# 运行产物（日志、模型交互记录、修复中间稿）—— 不纳入打包，仅保留空目录
+outputs/*
+!outputs/.gitkeep
+
+# 本地 IDE / 工具设置（不进公共仓库）
+.claude/
+.vscode/
+
+# CMake / 编译产物 + cannsim 报告（host/kernel 测试生成，不纳入仓库）
+build/
+repos/accl/**/build/
+# run_test.sh 临时创建的头文件软链（结束会删，残留也别提交）
+repos/accl/libascendcxx/test/libascendcxx/ascend/kernel/*/ascend

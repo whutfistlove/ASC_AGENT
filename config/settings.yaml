@@ -1,0 +1,69 @@
+# cccl-to-accl-v3 用户配置
+# 只需覆盖你关心的字段，其余项自动回退到 core/config.py 的 DEFAULTS。
+# 字符串里可用 ${ENV} 与 ${ENV:-默认值}；PROJECT_ROOT / HOME 已内置。
+
+project:
+  name: cccl-to-accl-v3
+
+paths:
+  # 源仓库（CCCL）与目标仓库（ACCL）默认都放在项目内 repos/ 下，
+  # 已把 mylearn 的 host/kernel 测试链路整合进项目，无需再依赖外部 mylearn。
+  cccl_repo: "${CCCL_REPO:-${PROJECT_ROOT}/repos/cccl}"
+  accl_repo: "${ACCL_REPO:-${PROJECT_ROOT}/repos/accl}"
+  output_dir: outputs
+
+mapping:
+  source_repo_prefix: libcudacxx/include/cuda/std
+  target_repo_prefix: libascendcxx/include/ascend/std
+  # 目录段重命名（v2 缺失这一步，导致 os.h 的 header guard 与示例对不上）
+  segment_substitutions:
+    - { from: __cccl, to: __accl }
+  module_hint_fallback: generic
+
+model:
+  provider: zhipu          # zhipu | mock
+  model_name: glm-5.1        # 可改成 glm-5.1 / glm-4.6 等
+  api_key_env: ZHIPU_API_KEY
+  # 官方 OpenAI 兼容接口（Bearer 鉴权）；可用环境变量 ZHIPU_BASE_URL 覆盖
+  base_url: "${ZHIPU_BASE_URL:-https://open.bigmodel.cn/api/paas/v4/chat/completions}"
+  temperature: 0.6
+  max_tokens: 65536
+  thinking: false          # 置 true 时请求体加 {"thinking": {"type": "enabled"}}
+  response_format_json: true
+  stream: true             # 流式调用；配合 --show-model-io 可实时逐字回显
+
+repo_verify:
+  # 留空则自动探测 conda.sh；也可显式写绝对路径
+  conda_sh: "${CONDA_SH:-}"
+  conda_env: asc_cccl_env
+  clang_format_bin: clang-format    # 不再写死 clang-format-14
+  push_remote: origin
+  base_branch: develop
+  branch_prefix: feature/ai
+  commit_message_template: "add {filename}"
+  sign_off: true
+  only_add_target_file: true
+  require_clean_worktree: true
+  # hook 检查文案可配置；换 hook / 换文案时改这里即可，不必动 Python
+  checks:
+    - name: license
+      pattern: "Add Apache 2\\.0 license header.*Passed"
+      required: true
+    - name: style
+      pattern: "CANN code style check \\(clang-format \\+ cpplint\\).*Passed"
+      required: true
+
+retry:
+  max_fix_rounds: 5
+
+examples:
+  example_1:
+    cccl: "${PROJECT_ROOT}/examples/example1_cccl.h"
+    accl: "${PROJECT_ROOT}/examples/example1_accl.h"
+  example_2:
+    cccl: "${PROJECT_ROOT}/examples/example2_cccl.h"
+    accl: "${PROJECT_ROOT}/examples/example2_accl.h"
+
+normalize:
+  fix_directive_spacing: true
+  ensure_trailing_newline: true

@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+def save_text(path: Path, content: str) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 显式 newline="\n"：禁止 Python 在任何平台把 "\n" 翻译成 "\r\n"。
+    # 生成的 .sh 一旦带 CRLF，bash 下 `set -e` 会失效并产生假阳性。
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
+def read_text_file(path_str: str) -> str:
+    path = Path(path_str).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def call_model_with_io(model, *, stage: str, system_prompt: str, user_content: str,
+                       show_io: bool) -> str:
+    """调用模型并返回完整响应文本。
+
+    - show_io=False：直接调用并返回（流式仍在底层进行，只是不回显）。
+    - show_io=True：打印 system 提示词 + 完整请求，并通过 on_delta 把响应**实时逐字**
+      打印出来（流式）；若客户端非流式 / mock 未触发增量，则在结束后一次性打印完整响应。
+    """
+    if not show_io:
+        return model.generate(system_prompt=system_prompt, user_content=user_content)
+
+    sep = "=" * 72
+    print(f"\n{sep}")
+    print(f"[模型交互] {stage} —— system_prompt（提示词）")
+    print(sep)
+    print(system_prompt)
+    print(f"\n{sep}")
+    print(f"[模型交互] {stage} —— user_content（发给模型的完整请求）")
+    print(sep)
+    print(user_content)
+    print(f"\n{sep}")
+    print(f"[模型交互] {stage} —— 模型响应（流式逐字）")
+    print(sep)
+
+    streamed = {"any": False}
+
+    def on_delta(text: str) -> None:
+        streamed["any"] = True
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+    raw = model.generate(system_prompt=system_prompt, user_content=user_content, on_delta=on_delta)
+    if streamed["any"]:
+        print()  # 流式结束后补一个换行
+    else:
+        print(raw)  # 非流式 / mock：一次性打印
+    print(f"{sep}\n")
+    return raw
