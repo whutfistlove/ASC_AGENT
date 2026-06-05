@@ -39,7 +39,7 @@ int main()
     (void)h_x;
     (void)h_y;
     for (size_t i = 0; i < n; ++i) {
-        { h_in0[i] = (i * 3) % 11 - 5; h_in1[i] = (i * 7 + 2) % 13 - 6; h_in2[i] = (i * 11 + 5) % 17 - 8; }
+        { h_in0[i] = static_cast<int32_t>((i * 7 + 3) % 19) - 9; h_in1[i] = static_cast<int32_t>((i * 13 + 5) % 23) - 11; h_in2[i] = static_cast<int32_t>((i * 11 + 1) % 17) - 8; }
     }
 
     void* d_in0 = nullptr;
@@ -89,7 +89,7 @@ int main()
         (void)expected0;
         (void)expected1;
         (void)expected2;
-        { float lo = in0_ref; if (in1_ref < lo) lo = in1_ref; if (in2_ref < lo) lo = in2_ref; float hi = in0_ref; if (in1_ref > hi) hi = in1_ref; if (in2_ref > hi) hi = in2_ref; expected0 = lo; expected2 = hi; expected1 = in0_ref + in1_ref + in2_ref - lo - hi; }
+        { int32_t _a = in0_ref, _b = in1_ref, _c = in2_ref; if (_b < _a) { int32_t _t = _a; _a = _b; _b = _t; } if (_c < _a) { int32_t _t = _a; _a = _c; _c = _t; } if (_c < _b) { int32_t _t = _b; _b = _c; _c = _t; } expected0 = _a; expected1 = _b; expected2 = _c; }
         int32_t got0 = h_out0[i];
         if (print_samples < 0 || static_cast<long>(i) < print_samples) {
             std::cout << "[kernel][sort3][" << i << "][out0]" << " in0=" << in0_ref << " in1=" << in1_ref << " in2=" << in2_ref

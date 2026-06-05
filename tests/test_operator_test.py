@@ -9,26 +9,14 @@ from core.operator_test import OperatorTestRunner
 
 
 def _make_config(tmp_path) -> Config:
-    mylearn = tmp_path / "mylearn"
-    kernel_tpl = (
-        mylearn
-        / "libascendcxx"
-        / "test"
-        / "libascendcxx"
-        / "ascend"
-        / "kernel"
-        / "max_example"
-        / "cmake"
-    )
-    kernel_tpl.mkdir(parents=True, exist_ok=True)
-    (kernel_tpl / "npu_lib.cmake").write_text("# template\n", encoding="utf-8")
-
+    # 目标仓（输出）。注意：不再预置 cmake 模板——npu_lib.cmake 现由代码生成，
+    # 运行器不再把目标仓里的 max_example/cmake 当作输入模板（I/O 归位）。
     return Config.load(
         None,
         project_root=tmp_path,
         overrides={
             "paths": {
-                "mylearn_repo": str(mylearn),
+                "accl_repo": str(tmp_path / "accl"),
                 "output_dir": str(tmp_path / "outputs"),
             },
             "repo_verify": {"conda_sh": ""},
@@ -47,7 +35,10 @@ def test_prepare_tests_creates_host_and_kernel_scaffold(tmp_path):
     assert Path(res.host_test_file).exists()
     assert Path(res.kernel_test_dir).exists()
     assert Path(res.kernel_test_dir, "run_test.sh").exists()
-    assert Path(res.kernel_test_dir, "cmake", "npu_lib.cmake").exists()
+    # npu_lib.cmake 现由代码生成（不再从目标仓拷贝模板）。
+    npu = Path(res.kernel_test_dir, "cmake", "npu_lib.cmake").read_text(encoding="utf-8")
+    assert "ascendc_library(ascendc_kernels_${RUN_MODE}" in npu
+    assert "ascendc_kernel_cmake" in npu
     cmake_text = Path(res.kernel_test_dir, "CMakeLists.txt").read_text(encoding="utf-8")
     assert "--allow-shlib-undefined" in cmake_text
     assert "--disable-new-dtags" not in cmake_text

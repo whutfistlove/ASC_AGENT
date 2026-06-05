@@ -22,10 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from core.best_of_n import best_of_n, score_host_test_code
 from core.config import Config
+from core.example_retrieval import select_test_examples
 from core.model_client import BaseModelClient, extract_json_object
 from core.operator_kernel_scaffold import KernelScaffoldBuilder
-from core.utils import call_model_with_io, read_text_file, save_text
+from core.utils import call_model_maybe_tools, read_text_file, save_text
 
 # kernel_spec 必填槽位。gm_inputs/gm_outputs 控制脚手架生成多少个 GM 输入/输出；
 # 旧 spec 未提供 gm_outputs 时等价于单输出。
@@ -117,23 +119,30 @@ def _read_optional(path_str: str) -> str:
         return ""
 
 
-def _build_examples_block(config: Config) -> str:
+def _build_examples_block(config: Config, *, algo_name: str = "", cccl_test_text: str = "") -> str:
+    # 按算子相关度从 examples/tests 检索最贴近的示例（默认开；关掉则用配置顺序）。
+    selected = select_test_examples(
+        config, algo_name=algo_name, cccl_test_text=cccl_test_text,
+        k=config.few_shot_top_k, enabled=config.examples_retrieval_enabled,
+        exclude_self=True,  # 迁 X 的测试不拿 X 自己的测试当示例（防泄漏）
+    )
     blocks: list[str] = []
-    for key, ex in config.test_example_paths().items():
+    for ex in selected:
         cccl_test = _read_optional(ex.get("cccl_test", ""))
         accl_host = _read_optional(ex.get("accl_host", ""))
         accl_kernel_spec = _read_optional(ex.get("accl_kernel_spec", ""))
         if not (cccl_test and accl_host and accl_kernel_spec):
             continue
+        name = ex.get("name", "")
         blocks.append(
             f"""====================
-【测试迁移示例 {key} —— CCCL 侧测试】
+【测试迁移示例 {name} —— CCCL 侧测试】
 {cccl_test}
 
-【测试迁移示例 {key} —— 正确的 ACCL host 测试】
+【测试迁移示例 {name} —— 正确的 ACCL host 测试】
 {accl_host}
 
-【测试迁移示例 {key} —— 正确的 ACCL kernel_spec(JSON)】
+【测试迁移示例 {name} —— 正确的 ACCL kernel_spec(JSON)】
 {accl_kernel_spec}
 """
         )
@@ -185,10 +194,18 @@ def migrate_operator_tests(
     prompt_filename: str = "migrate_tests.md",
     verbose: bool = True,
     show_model_io: bool = False,
+    toolbox=None,
+    max_tool_rounds: int = 4,
 ) -> MigratedTests:
-    """调模型，把 CCCL 测试迁移为 ACCL host 测试 + kernel_spec。"""
+    """调模型，把 CCCL 测试迁移为 ACCL host 测试 + kernel_spec。
+
+    toolbox 非空且客户端支持时，模型可先读 ACCL 头真实签名 / grep 符号 / g++ 自检
+    host 测试，再产出迁移结果（生成期取证），否则回退「单轮 prompt→JSON」。
+    """
     out = config.output_dir
-    examples_block = _build_examples_block(config)
+    examples_block = _build_examples_block(
+        config, algo_name=algo_name, cccl_test_text=cccl_test_text
+    )
     request_text = build_test_migration_request(
         algo_name=algo_name,
         include_path=include_path,
@@ -202,20 +219,45 @@ def migrate_operator_tests(
 
     prompt_text = config.read_skill(prompt_filename)
     if verbose:
-        print(f"开始调用模型迁移 {algo_name} 的测试代码...")
-    raw = call_model_with_io(
-        model_client,
-        stage=f"测试迁移（{algo_name}）",
-        system_prompt=prompt_text,
-        user_content=request_text,
-        show_io=show_model_io,
-    )
+        tool_hint = "（带工具自检）" if toolbox is not None else ""
+        print(f"开始调用模型迁移 {algo_name} 的测试代码{tool_hint}...")
+    def _gen() -> str:
+        return call_model_maybe_tools(
+            model_client,
+            stage=f"测试迁移（{algo_name}）",
+            system_prompt=prompt_text,
+            user_content=request_text,
+            show_io=show_model_io,
+            toolbox=toolbox,
+            max_tool_rounds=max_tool_rounds,
+            tool_log_tag=f"test_migrate_{algo_name}",
+        )
+
+    def _parse(text: str) -> dict:
+        d = extract_json_object(text)
+        return {
+            "host_test_code": validate_host_test_code(d.get("host_test_code", "")),
+            "kernel_spec": validate_kernel_spec(d.get("kernel_spec", {})),
+            "notes": str(d.get("notes", "")).strip(),
+        }
+
+    # best-of-N：draft_samples>1 时多采样，host 测试以 g++ -fsyntax-only 自检择优（默认 1）。
+    if config.draft_samples > 1:
+        parsed, raw, scores = best_of_n(
+            _gen, _parse,
+            lambda p: score_host_test_code(p["host_test_code"], toolbox),
+            n=config.draft_samples,
+        )
+        if verbose:
+            print(f"best-of-{config.draft_samples} 测试迁移择优：scores={scores}")
+    else:
+        raw = _gen()
+        parsed = _parse(raw)
     save_text(out / "test_migrate_raw.md", raw)
 
-    data = extract_json_object(raw)
-    host_test_code = validate_host_test_code(data.get("host_test_code", ""))
-    kernel_spec = validate_kernel_spec(data.get("kernel_spec", {}))
-    notes = str(data.get("notes", "")).strip()
+    host_test_code = parsed["host_test_code"]
+    kernel_spec = parsed["kernel_spec"]
+    notes = parsed["notes"]
 
     result = {
         "host_test_code": host_test_code.rstrip("\n"),

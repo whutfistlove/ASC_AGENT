@@ -314,6 +314,14 @@ class MockModelClient:
         self._tool_script = list(tool_script) if tool_script else None
         self.calls: list[dict] = []
 
+    def _next_response(self, user_content: str) -> str:
+        """取下一条响应：有脚本走脚本，否则按 expected_header_guard 现编。"""
+        if self._responses is not None:
+            if not self._responses:
+                raise AssertionError("MockModelClient 预设响应已耗尽")
+            return self._responses.pop(0)
+        return self._auto_response(user_content)
+
     def generate(
         self,
         *,
@@ -322,11 +330,7 @@ class MockModelClient:
         on_delta: Optional[Callable[[str], None]] = None,
     ) -> str:
         self.calls.append({"system_prompt": system_prompt, "user_content": user_content})
-        if self._responses is not None:
-            if not self._responses:
-                raise AssertionError("MockModelClient 预设响应已耗尽")
-            return self._responses.pop(0)
-        return self._auto_response(user_content)
+        return self._next_response(user_content)
 
     def generate_with_tools(
         self,
@@ -338,11 +342,15 @@ class MockModelClient:
         max_tool_rounds: int = 4,
         on_delta: Optional[Callable[[str], None]] = None,
     ) -> str:
-        """离线模拟带工具的对话：先按 tool_script 调用工具，再返回最终响应。"""
+        """离线模拟带工具的对话：先按 tool_script 调用工具，再返回最终响应。
+
+        每个逻辑调用只记一次 calls、只消耗一条响应（不再二次委派给 generate），
+        这样带工具与不带工具两条路径对 calls/responses 的语义保持一致。
+        """
         self.calls.append({"system_prompt": system_prompt, "user_content": user_content, "tools": True})
         for call in (self._tool_script or [])[:max_tool_rounds]:
             dispatch(call.get("name", ""), call.get("arguments", {}))
-        return self.generate(system_prompt=system_prompt, user_content=user_content, on_delta=on_delta)
+        return self._next_response(user_content)
 
     @staticmethod
     def _extract_field(text: str, label: str) -> str:

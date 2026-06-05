@@ -33,6 +33,9 @@ python3 main.py convert --input <header> --with-tests --test-feedback-to-model
 
 # 对已经迁移好的目标生成/运行测试。
 python3 main.py test --input <header>
+
+# 把已迁移并验证的算子晋升为 examples/ 金标准示例（不带参数则列出候选）。
+python3 main.py make-example clamp sort3 quad_fanout
 ```
 
 没有 CANN/cannsim 的机器可以加 `--host-only`。需要更快的 kernel 小规模检查时可以加
@@ -103,13 +106,16 @@ ASC_agent
 │   ├── model_client.py             模型客户端（含工具调用）、JSON 解析与文本归一化
 │   ├── pipeline.py                 头文件迁移主流程
 │   ├── test_migrator.py            CCCL 测试到 ACCL host/kernel spec 的迁移
+│   ├── example_retrieval.py        按算子相关度从 examples/ 检索 few-shot 示例
+│   ├── example_promote.py          把已验证的迁移产物晋升为 examples/ 金标准示例
+│   ├── best_of_n.py                best-of-N 采样择优（头文件结构 / host 自检打分）
 │   ├── operator_test.py            host/kernel 测试准备、执行和判定（编排）
-│   ├── operator_kernel_scaffold.py AscendC/ACL kernel 的 C++ 源 + CMake 生成
+│   ├── operator_kernel_scaffold.py AscendC/ACL kernel 的 C++ 源 + CMake（含 npu_lib.cmake）生成
 │   ├── scaffold_scripts.py         host/kernel/full 的 shell 运行脚本生成
 │   ├── scaffold_env.py             统一环境准备片段（host/kernel 共用单一事实源）
 │   ├── build_env.py                构建环境探测与自愈（过期缓存/CANN 工具/PATH）
 │   ├── failure_triage.py           测试失败分类（env 环境问题 / code 可修）
-│   ├── agent_tools.py              模型可调用的取证/自检工具（默认关闭）
+│   ├── agent_tools.py              模型取证/自检工具 + 工具箱工厂（覆盖生成与修复）
 │   ├── fix_once.py                 基于提交日志或测试日志的单轮修复
 │   └── repo_verify.py              仓库格式化/提交类校验
 ├── skills/                         模型提示词
@@ -203,12 +209,71 @@ host / kernel / full_project 三类测试的运行脚本都由 `core/scaffold_sc
 的同一段环境准备；AscendC/ACL 的 C++ 源由 `core/operator_kernel_scaffold.py` 生成。仓库内
 不再签入手写的 `000_set_env.sh`…`004_*.sh`（已删除）。
 
-## 模型工具（P1，默认关闭）
+## 模型工具（取证 + 自检，默认开启，覆盖生成与修复全链路）
 
-`model.tools_enabled: true` 时，测试反馈修复允许模型先调用取证/自检工具再产出修复：
+`model.tools_enabled: true`（现为默认）时，模型可在产出结果前先调用取证/自检工具：
 `read_repo_file`（读 sibling 头 / `__config`）、`grep_repo`（查宏/符号）、`host_syntax_check`
 （`g++ -fsyntax-only` 自检）、`extract_error_lines`（从大日志抽 error 行）。实现见
-`core/agent_tools.py`，工具调用循环见 `model_client.generate_with_tools`。
+`core/agent_tools.py`（含工厂 `build_toolbox`），工具调用循环见 `model_client.generate_with_tools`。
+
+工具不再只接在修复路径，而是覆盖**头文件初稿生成**（`pipeline._rewrite`）、**测试迁移**
+（`test_migrator.migrate_operator_tests`）与**测试反馈修复**（`fix_once.run_test_artifact_fix`）
+三处——把高价值的生成环节从「蒙眼单发」升级为「可取证 + 落盘前可自验证」。provider 为
+`mock` 时工厂返回 `None`，离线流程保持原「单轮 prompt→JSON」行为。
+
+其余让模型能力更被吃满的改进：
+
+- **扩展思考**：`model.thinking: true`，迁移/修复这类需要分步推理的硬任务不再被纯 JSON 压没
+  推理（流式下 `reasoning_content` 单独回显，返回值仍是干净 JSON）。
+- **日志蒸馏入反馈**：测试反馈默认经 `agent_tools.distill_error_lines` 抽出 error 行及上下文，
+  取代旧的「按 12k 字节硬截断」（真正的报错常被截没）。
+- **跨轮记忆**：测试反馈修复把「历轮根因/改了哪些件/是否通过」回喂模型（`attempt_history`），
+  避免无状态盲改、反复提交被证明无效的修复。
+- **few-shot 检索**（`core/example_retrieval.py`）：按算子相关度（同名 + 名称亲和 + 源文本
+  token 重叠）从 `examples/` 选最贴近的示例，取代「永远 max/os/swap 三件套」。纯词法、离线、
+  确定性；示例库越大挑得越准，只有两条时退化为全选。开关 `few_shot.retrieval`（默认开）。
+  生成时默认 `exclude_self`：迁 X 不会把 X 自己的答案当示例（防泄漏）。
+- **best-of-N 择优**（`core/best_of_n.py`）：一次采样多个候选，用便宜的校验器择优——头文件按
+  guard/预处理指令配平打结构分，host 测试用 `g++ -fsyntax-only` 自检打分。`model.draft_samples`
+  控制采样数，默认 `1`（单发，行为不变），>1 提升一次成功率（模型调用数成倍增加）。
+
+## 输入/输出归位（I/O 边界）
+
+明确两类目录的角色，避免「把输出当输入」：
+
+| 角色 | 位置 | 说明 |
+|------|------|------|
+| **输入** | `repos/cccl`（源仓）、`examples/`（few-shot 示例） | 只读；模型生成的依据 |
+| **输出** | `repos/accl`（目标仓）、`outputs/`（模型 IO/日志/产物） | 只写；生成与测试的产物 |
+
+历史上 kernel 测试的 `cmake/npu_lib.cmake` 以「从目标仓 `max_example/cmake` 拷贝到其它算子」
+的方式复用——等于把**目标仓（输出）当成模板输入**。现与其它脚手架一致，由
+`KernelScaffoldBuilder.npu_lib_cmake()` **代码生成**（单一事实源），目标仓里的 `cmake/` 纯属输出，
+不再被任何环节当输入读取。
+
+## 示例库的扩充与 curation（make-example）
+
+few-shot 检索只有在示例库**够大够普遍**时才挑得动。示例是金标准，因此不靠手写，而是把
+`repos/accl` 里**已迁移并通过测试**的算子「晋升」为示例（`core/example_promote.py`）：
+
+```bash
+python3 main.py make-example                      # 列出可晋升候选
+python3 main.py make-example clamp sort3 minmax    # 晋升指定算子
+python3 main.py make-example --all --overwrite     # 全量刷新
+```
+
+它把该算子的 CCCL 源头 / ACCL 头 / CCCL 测试 / ACCL host 测试 / kernel_spec 复制进
+`examples/headers` 与 `examples/tests`。这是一条**人触发的 curation 步骤**（把已验证的*输出*
+沉淀为可复用的*输入*），不破坏运行时 I/O 边界——agent 迁移时仍只读 `cccl + examples`。
+
+晋升前有**质量门禁**：ACCL 头须含 guard、host 测试经 `validate_host_test_code`（必须失败时
+返回非零）、kernel_spec 经 `validate_kernel_spec`。门禁不过的测试被挡在库外（头若有效仍晋升）。
+本仓实测中，它已拦下 `minmax` 的「假绿」host 测试——只打印 `FAIL` 却始终 `return 0`，
+正是绝不能进金标准库的反例。
+
+> 仓库已据此把示例库从 `{max, os}` 头 + `{max, swap}` 测试扩到 8 个头 + 6 套测试，覆盖二元返回
+> （max/min）、原地 void（swap）、三参（clamp）、多输出 pair（minmax 头）、多 IO 整数（sort3）、
+> 宽 IO（quad_fanout）等多种算子形态。
 
 更完整的安装、工作流和测试逻辑见 [docs/guide.md](docs/guide.md)；尚未实现的方向见
 [docs/roadmap.md](docs/roadmap.md)。

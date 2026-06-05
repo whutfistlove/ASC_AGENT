@@ -99,6 +99,40 @@ _ERROR_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def distill_error_lines(
+    text: str, *, context: int = 2, max_chars: int = 20000, tail_lines: int = 20
+) -> str:
+    """从大日志里抽取真正的 error/warning 行及其上下文，丢掉成片的噪音。
+
+    两处复用同一份蒸馏逻辑（单一事实源）：
+      * 模型主动调用的 `extract_error_lines` 工具；
+      * 默认测试反馈构造（main._build_test_feedback_text）——避免把数万行日志按字节
+        硬截断、反而把真正的报错截没了。
+    无 error 特征时回退到日志末尾若干行（构建卡在中途时，尾部往往就是现场）。
+    """
+    if not text:
+        return ""
+    lines = text.splitlines()
+    keep: set[int] = set()
+    for i, line in enumerate(lines):
+        if _ERROR_LINE_RE.search(line):
+            for j in range(max(0, i - context), min(len(lines), i + context + 1)):
+                keep.add(j)
+    if not keep:
+        return f"[未匹配到 error 特征，给出日志末尾 {tail_lines} 行]\n" + "\n".join(
+            lines[-tail_lines:]
+        )
+    out: list[str] = []
+    prev = -2
+    for idx in sorted(keep):
+        if idx != prev + 1:
+            out.append("--")
+        out.append(f"{idx + 1}: {lines[idx]}")
+        prev = idx
+    joined = "\n".join(out)
+    return joined[:max_chars] + ("\n...[truncated]" if len(joined) > max_chars else "")
+
 _DEFAULT_GREP_SUFFIXES = (".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx", ".c", ".inc")
 _SKIP_DIRS = {"build", ".git", "__pycache__", "cmake-build-debug"}
 
@@ -207,28 +241,18 @@ class AgentToolbox:
                 return f"[extract_error_lines] 无法读取日志 {log_name}: {exc}"
         if not text:
             return "[extract_error_lines] 未提供 log_name 或 text"
-        lines = text.splitlines()
-        keep: set[int] = set()
-        for i, line in enumerate(lines):
-            if _ERROR_LINE_RE.search(line):
-                for j in range(max(0, i - context), min(len(lines), i + context + 1)):
-                    keep.add(j)
-        if not keep:
-            tail = "\n".join(lines[-20:])
-            return "[未匹配到 error 特征，给出日志末尾 20 行]\n" + tail
-        out: list[str] = []
-        prev = -2
-        for idx in sorted(keep):
-            if idx != prev + 1:
-                out.append("--")
-            out.append(f"{idx + 1}: {lines[idx]}")
-            prev = idx
-        joined = "\n".join(out)
-        return joined[: self.max_read_bytes] + ("\n...[truncated]" if len(joined) > self.max_read_bytes else "")
+        return distill_error_lines(text, context=context, max_chars=self.max_read_bytes)
 
     # ----- 分发 ----- #
     def dispatch(self, name: str, arguments: dict) -> str:
-        self.call_log.append({"name": name, "arguments": arguments})
+        result = self._invoke(name, arguments)
+        # 记录调用 + 结果摘要：让「模型是否/如何调用工具」可被审计（见 dump_call_log）。
+        self.call_log.append(
+            {"name": name, "arguments": arguments, "result_preview": str(result)[:300]}
+        )
+        return result
+
+    def _invoke(self, name: str, arguments: dict) -> str:
         try:
             if name == "read_repo_file":
                 return self.read_repo_file(str(arguments["relpath"]))
@@ -243,6 +267,38 @@ class AgentToolbox:
             return f"[dispatch] 工具 {name} 缺少必填参数: {exc}"
         except Exception as exc:  # 工具失败不应中断对话
             return f"[dispatch] 工具 {name} 执行出错: {type(exc).__name__}: {exc}"
+
+    def dump_call_log(self, path) -> None:
+        """把工具调用记录落盘（name/arguments/result_preview + 总次数），便于事后审计。
+
+        解决「只能靠模型在 notes 里自述是否调用了工具」的盲区——现在每个用工具的阶段都
+        留下硬证据：count=0 即模型本阶段没调用任何工具。
+        """
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"count": len(self.call_log), "tool_calls": self.call_log}
+        p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def build_toolbox(config):
+    """按配置构建模型工具箱（取证 + host 自检）；不满足条件返回 None。
+
+    单一事实源：迁移 / 测试迁移 / 测试反馈修复三条链路都经此构建，避免各处重复拼装。
+    门槛：
+      * `model.tools_enabled` 关闭 → None（保持「单轮 prompt→JSON」的旧行为）。
+      * provider == mock → None（离线 mock 不需要真实工具，省去无谓的 tool 往返）。
+    host_syntax_check 的 -I 指向 ACCL include 根，让模型能就地解析 `ascend/std/...`。
+    """
+    if not getattr(config, "model_tools_enabled", False):
+        return None
+    if getattr(config, "model_provider", "") == "mock":
+        return None
+    include_dir = Path(config.target_repo) / "libascendcxx" / "include"
+    return AgentToolbox(
+        target_repo=Path(config.target_repo),
+        output_dir=config.output_dir,
+        host_include_dirs=[include_dir],
+    )
 
 
 def parse_tool_arguments(raw) -> dict:

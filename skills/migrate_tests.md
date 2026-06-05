@@ -34,4 +34,9 @@
 ## kernel_spec 约束
 {{include: _shared/kernel_spec_contract.md}}
 
+## 可用工具（若本次请求提供了 tools）
+- `read_repo_file` / `grep_repo`：核对**已迁移 ACCL 头的真实签名与依赖**（以它为准，而非按 CCCL 头臆测返回类型/参数个数），并确认 host 测试 include 的路径存在。
+- `host_syntax_check`：对生成的 `host_test_code` 先做 `g++ -fsyntax-only` 自检（自动带 ACCL include 路径），编译/包含不过就地修正再输出，省掉一整轮跑测往返。
+调查完成后只输出最终 JSON 对象。
+
 只输出上面那个 JSON 对象。

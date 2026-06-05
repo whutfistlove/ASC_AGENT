@@ -15,7 +15,10 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional, Protocol
 
+from core.agent_tools import build_toolbox
+from core.best_of_n import best_of_n, score_header_code
 from core.config import Config
+from core.example_retrieval import select_header_examples
 from core.fix_once import run_single_fix_from_log
 from core.model_client import (
     BaseModelClient,
@@ -27,7 +30,7 @@ from core.path_mapper import (
     map_target_relpath,
     expected_guard_from_relpath,
 )
-from core.utils import save_text, read_text_file, call_model_with_io
+from core.utils import save_text, read_text_file, call_model_maybe_tools
 
 
 # --------------------------------------------------------------------------- #
@@ -66,24 +69,28 @@ class RunResult:
 # --------------------------------------------------------------------------- #
 class Pipeline:
     def __init__(self, config: Config, model_client: BaseModelClient,
-                 verifier: Verifier, verbose: bool = True, show_model_io: bool = False):
+                 verifier: Verifier, verbose: bool = True, show_model_io: bool = False,
+                 toolbox=None):
         self.config = config
         self.model = model_client
         self.verifier = verifier
         self.verbose = verbose
         self.show_model_io = show_model_io
+        # 显式注入优先（便于离线测试 agentic 生成路径）；否则按配置构建（默认关闭→None）。
+        self.toolbox = toolbox
 
     def _log(self, *args) -> None:
         if self.verbose:
             print(*args)
 
+    def _resolve_toolbox(self):
+        return self.toolbox if self.toolbox is not None else build_toolbox(self.config)
+
     # ---- 构造初始改写请求 ---- #
     def _build_initial_request(self, input_path: Path, source_text: str,
-                               module_hint: str, target_relpath: str, guard: str) -> str:
-        ex = self.config.example_paths()
-        e1c, e1a = ex["example_1"]["cccl"], ex["example_1"]["accl"]
-        e2c, e2a = ex["example_2"]["cccl"], ex["example_2"]["accl"]
-        return f"""【当前任务文件路径】
+                               module_hint: str, target_relpath: str, guard: str,
+                               examples: list[tuple[str, str]]) -> str:
+        head = f"""【当前任务文件路径】
 {input_path}
 
 【module_hint】
@@ -97,21 +104,15 @@ class Pipeline:
 
 【当前待改写的 CCCL 文件内容】
 {source_text}
-
-====================
-【成功示例 1 - 原始 CCCL 文件内容】
-{read_text_file(e1c)}
-
-【成功示例 1 - 正确 ACCL 文件内容】
-{read_text_file(e1a)}
-
-====================
-【成功示例 2 - 原始 CCCL 文件内容】
-{read_text_file(e2c)}
-
-【成功示例 2 - 正确 ACCL 文件内容】
-{read_text_file(e2a)}
 """
+        blocks = []
+        for i, (cccl, accl) in enumerate(examples, 1):
+            blocks.append(
+                f"====================\n"
+                f"【成功示例 {i} - 原始 CCCL 文件内容】\n{read_text_file(cccl)}\n\n"
+                f"【成功示例 {i} - 正确 ACCL 文件内容】\n{read_text_file(accl)}\n"
+            )
+        return head + "\n" + "\n".join(blocks)
 
     def run(self, input_path: Path) -> RunResult:
         input_path = Path(input_path).resolve()
@@ -148,24 +149,55 @@ class Pipeline:
         self._log(f"module_hint={module_hint}  target_relpath={target_relpath}  guard={guard}")
 
         # ---- 模型初稿 ---- #
-        request_text = self._build_initial_request(input_path, source_text, module_hint, target_relpath, guard)
+        # few-shot 按算子相关度从 examples/ 检索（示例库越大越受益；默认开，可关回固定顺序）。
+        examples = select_header_examples(
+            cfg, target_relpath=target_relpath, source_text=source_text,
+            k=cfg.few_shot_top_k, enabled=cfg.examples_retrieval_enabled,
+            exclude_self=True,  # 迁 X 不拿 X 自己的答案当示例（防泄漏）
+        )
+        request_text = self._build_initial_request(
+            input_path, source_text, module_hint, target_relpath, guard, examples
+        )
         save_text(out / "model_request.md", request_text)
 
         prompt = cfg.read_skill("rewrite_initial.md")
-        self._log("开始调用模型进行初始改写...")
-        raw = call_model_with_io(
-            self.model, stage="初始改写", system_prompt=prompt,
-            user_content=request_text, show_io=self.show_model_io,
+        toolbox = self._resolve_toolbox()
+        self._log(
+            "开始调用模型进行初始改写..."
+            + ("（带工具：可读 sibling 头 / grep 符号 / 落盘前自检）" if toolbox else "")
         )
+        # 启用工具后，模型可在出初稿前读 sibling 头、查 __config 宏、g++ 自检——
+        # 把「蒙眼单发」变成「可取证 + 可自验证」的生成，直接减少后续修复往返。
+        def _draft_once() -> str:
+            return call_model_maybe_tools(
+                self.model, stage="初始改写", system_prompt=prompt,
+                user_content=request_text, show_io=self.show_model_io,
+                toolbox=toolbox, max_tool_rounds=cfg.model_max_tool_rounds,
+                tool_log_tag="rewrite",
+            )
+
+        def _parse_draft(text: str) -> dict:
+            d = extract_json_object(text)
+            for f in ("file_type", "rewritten_code", "notes"):
+                if f not in d:
+                    raise ValueError(f"模型输出 JSON 缺少必要字段: {f}")
+            d["rewritten_code"] = normalize_generated_text(str(d["rewritten_code"]), cfg.normalize_options)
+            return d
+
+        # best-of-N：draft_samples>1 时多采样，按 guard/指令配平结构分择优（默认 1=单发）。
+        if cfg.draft_samples > 1:
+            data, raw, scores = best_of_n(
+                _draft_once, _parse_draft,
+                lambda d: score_header_code(d["rewritten_code"], guard),
+                n=cfg.draft_samples,
+            )
+            self._log(f"best-of-{cfg.draft_samples} 初稿择优：scores={scores}")
+        else:
+            raw = _draft_once()
+            data = _parse_draft(raw)
         save_text(out / "model_raw_output.md", raw)
 
-        data = extract_json_object(raw)
-        for f in ("file_type", "rewritten_code", "notes"):
-            if f not in data:
-                raise ValueError(f"模型输出 JSON 缺少必要字段: {f}")
-
-        rewritten_code = normalize_generated_text(str(data["rewritten_code"]), cfg.normalize_options)
-        data["rewritten_code"] = rewritten_code
+        rewritten_code = data["rewritten_code"]
         rewritten_target = out / "rewritten_target.h"
         save_text(out / "rewrite_result.json", json.dumps(data, ensure_ascii=False, indent=2))
         save_text(rewritten_target, rewritten_code)

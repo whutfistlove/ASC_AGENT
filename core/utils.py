@@ -60,11 +60,13 @@ def call_model_with_io(model, *, stage: str, system_prompt: str, user_content: s
 
 
 def call_model_maybe_tools(model, *, stage: str, system_prompt: str, user_content: str,
-                           show_io: bool, toolbox=None, max_tool_rounds: int = 4) -> str:
+                           show_io: bool, toolbox=None, max_tool_rounds: int = 4,
+                           tool_log_tag: str = "") -> str:
     """有 toolbox 且客户端支持时走「带工具」对话，否则回退到单轮 generate。
 
     toolbox 提供 schemas() 与 dispatch(name, args)；这样客户端与具体工具实现解耦，
-    便于离线 mock 测试整条带工具的修复链路。
+    便于离线 mock 测试整条带工具的修复链路。tool_log_tag 给出时把本阶段的工具调用
+    审计落盘到 outputs/tool_calls_<tag>.json，并打印一行摘要（模型有没有调用工具一目了然）。
     """
     if toolbox is None or not hasattr(model, "generate_with_tools"):
         return call_model_with_io(
@@ -82,6 +84,7 @@ def call_model_maybe_tools(model, *, stage: str, system_prompt: str, user_conten
             sys.stdout.write(text)
             sys.stdout.flush()
 
+    before = len(getattr(toolbox, "call_log", []) or [])
     raw = model.generate_with_tools(
         system_prompt=system_prompt,
         user_content=user_content,
@@ -92,4 +95,15 @@ def call_model_maybe_tools(model, *, stage: str, system_prompt: str, user_conten
     )
     if show_io:
         print(f"\n{'=' * 72}\n")
+
+    # 工具调用审计：落盘 + 一行摘要，把「模型有没有调用工具」变成可见、可查的硬证据。
+    calls = list(getattr(toolbox, "call_log", []) or [])
+    this_stage = calls[before:]
+    names = ", ".join(c.get("name", "?") for c in this_stage) or "无"
+    print(f"[tools] {stage}：本阶段调用工具 {len(this_stage)} 次（{names}）")
+    if tool_log_tag and hasattr(toolbox, "dump_call_log") and getattr(toolbox, "output_dir", None):
+        try:
+            toolbox.dump_call_log(Path(toolbox.output_dir) / f"tool_calls_{tool_log_tag}.json")
+        except Exception:
+            pass
     return raw

@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import stat
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -280,14 +279,14 @@ class OperatorTestRunner:
         except OSError:
             pass
 
-    def _copy_kernel_cmake_template(self, kernel_dir: Path) -> None:
-        src = self._kernel_root / "max_example" / "cmake"
-        dst = kernel_dir / "cmake"
-        if dst.exists():
-            return
-        if not src.exists():
-            raise FileNotFoundError(f"缺少 kernel cmake 模板目录: {src}")
-        shutil.copytree(src, dst)
+    def _write_kernel_cmake(self, kernel_dir: Path) -> None:
+        """生成 `cmake/npu_lib.cmake`（代码即单一事实源）。
+
+        取代旧的「从目标仓 max_example/cmake 拷贝」——那等于把输出当输入，违反
+        「输入只在源仓/examples、输出只在目标仓/outputs」。这里与 CMakeLists.txt 一样
+        每次刷新，保证 CANN 适配修复对已存在的 *_example 目录也生效。
+        """
+        save_text(kernel_dir / "cmake" / "npu_lib.cmake", KernelScaffoldBuilder.npu_lib_cmake())
 
     def prepare_tests(
         self,
@@ -328,7 +327,7 @@ class OperatorTestRunner:
         result.host_prepared = True
         result.host_test_file = str(host_file)
 
-        self._copy_kernel_cmake_template(kernel_dir)
+        self._write_kernel_cmake(kernel_dir)
         # CMakeLists.txt is generated fixed scaffolding; refresh it so CANN linker
         # compatibility fixes take effect in existing *_example directories.
         save_text(kernel_dir / "CMakeLists.txt", self._kernel_cmakelists())

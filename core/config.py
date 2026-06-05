@@ -70,6 +70,12 @@ DEFAULTS: dict[str, Any] = {
         "thinking": False,            # 置 true 时请求体加 {"thinking": {"type": "enabled"}}
         "response_format_json": True, # 要求模型直接返回 JSON 对象
         "stream": True,               # 流式调用；配合 --show-model-io 可实时回显
+        "draft_samples": 1,           # best-of-N 候选数；1=单发（默认，行为不变）
+    },
+    # few-shot 检索：按算子相关度从 examples/ 选最贴近的示例（示例库越大越受益）。
+    "few_shot": {
+        "retrieval": True,            # 关掉则回退到 examples 配置顺序
+        "top_k": 2,
     },
     "repo_verify": {
         "conda_sh": "",               # 留空则自动探测
@@ -393,6 +399,20 @@ class Config:
     @property
     def model_max_tool_rounds(self) -> int:
         return int(self.raw["model"].get("max_tool_rounds", 4))
+
+    @property
+    def draft_samples(self) -> int:
+        """初稿/测试迁移的候选采样数（best-of-N）。1=单发（默认，行为不变）。"""
+        return max(1, int(self.raw["model"].get("draft_samples", 1)))
+
+    @property
+    def examples_retrieval_enabled(self) -> bool:
+        """是否按算子相关度从 examples/ 检索 few-shot（默认开）。关掉则用 configured 顺序。"""
+        return bool(self.raw.get("few_shot", {}).get("retrieval", True))
+
+    @property
+    def few_shot_top_k(self) -> int:
+        return max(1, int(self.raw.get("few_shot", {}).get("top_k", 2)))
 
     @property
     def repo_verify(self) -> dict:

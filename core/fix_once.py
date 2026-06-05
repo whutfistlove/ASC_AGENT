@@ -243,7 +243,15 @@ def build_test_artifact_fix_request(
     host_test_text: str,
     kernel_spec_json: str,
     test_feedback_text: str,
+    attempt_history: str = "",
 ) -> str:
+    history_block = ""
+    if attempt_history.strip():
+        history_block = f"""
+【历次修复尝试与结果（请勿重复已被证明无效的改动，换思路）】
+{attempt_history}
+"""
+
     return f"""【目标相对路径 target_relpath】
 {target_relpath}
 
@@ -258,7 +266,7 @@ def build_test_artifact_fix_request(
 
 【当前 kernel_spec(JSON) 基线】
 {kernel_spec_json}
-
+{history_block}
 【最新 host/kernel 测试反馈】
 {test_feedback_text}
 
@@ -306,6 +314,7 @@ def run_test_artifact_fix(
     kernel_spec: dict | None,
     test_feedback_text: str,
     round_index: int,
+    attempt_history: str = "",
     prompt_filename: str = "fix_tests_from_log.md",
     verbose: bool = True,
     show_model_io: bool = False,
@@ -332,6 +341,7 @@ def run_test_artifact_fix(
         host_test_text=host_test_text or "(无 host 测试基线)",
         kernel_spec_json=spec_json,
         test_feedback_text=test_feedback_text,
+        attempt_history=attempt_history,
     )
     save_text(output_dir / f"fix_request_test_round{round_index}.md", request_text)
 
@@ -343,10 +353,13 @@ def run_test_artifact_fix(
         model_client, stage=f"测试反馈修复 第 {round_index} 轮",
         system_prompt=prompt_text, user_content=request_text, show_io=show_model_io,
         toolbox=toolbox, max_tool_rounds=max_tool_rounds,
+        tool_log_tag=f"fix_round{round_index}",
     )
     save_text(output_dir / f"fix_model_raw_test_round{round_index}.md", raw)
 
-    data = extract_json_object(raw, strict=True)
+    # 带工具时，模型最终回答常带「我先做了 X 自检，下面是 JSON」这类前言（实测见过
+    # “Host test passes syntax check.”），严格 JSON 会误拒；故 toolbox 启用时放宽为非严格抽取。
+    data = extract_json_object(raw, strict=(toolbox is None))
     for field in ("root_cause", "notes"):
         if field not in data:
             raise ValueError(f"模型输出 JSON 缺少必要字段: {field}")

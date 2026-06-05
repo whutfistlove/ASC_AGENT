@@ -290,7 +290,10 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 - 当前 ACCL header；
 - 当前 host 测试；
 - 当前 kernel spec；
-- host/kernel 日志。
+- host/kernel 日志（默认经 `agent_tools.distill_error_lines` 蒸馏出 error 行及上下文，
+  而非按 12k 字节硬截断——真正的报错常埋在数万行噪音里，硬截断会把它截没）；
+- **历轮修复尝试与结果**（`attempt_history`：每轮的根因判定 / 改了哪些件 / 是否通过），
+  形成跨轮记忆，避免模型无状态盲改、反复提交被证明无效的修复。
 
 模型可以返回以下任意子集：
 
@@ -327,10 +330,12 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 能自愈的环境问题（过期缓存、CANN 工具 PATH）由 `core/build_env.py` 在执行前主动修复；缺 `cannsim`
 则把 kernel 标为 SKIPPED（不计失败）。
 
-## 11. 模型工具（取证 + 自检，默认关闭）
+## 11. 模型工具（取证 + 自检，默认开启，覆盖生成+修复全链路）
 
-把 `config/settings.yaml` 里 `model.tools_enabled` 置 `true`（并设 `max_tool_rounds`），
-测试反馈修复时模型可先调用工具调查再产出修复（`core/agent_tools.py`，沙箱限制在目标仓 / outputs）：
+`config/settings.yaml` 里 `model.tools_enabled` 现默认 `true`（配 `max_tool_rounds`）。工具不再
+只接在修复路径，而是由统一工厂 `core/agent_tools.build_toolbox` 注入到三处：头文件初稿生成、
+测试迁移、测试反馈修复——让模型在产出结果前就能取证/自检（`core/agent_tools.py`，沙箱限制在
+目标仓 / outputs；provider 为 `mock` 时返回 `None` 以保持离线行为）：
 
 | 工具 | 作用 |
 |------|------|
@@ -339,10 +344,17 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 | `host_syntax_check` | 用 `g++ -fsyntax-only` 先自检 host 产物，省一整轮往返 |
 | `extract_error_lines` | 从数万行日志里只抽 error/warning 行回喂 |
 
-工具调用循环在 `model_client.generate_with_tools`（OpenAI 兼容 `tools`，GLM 支持）。默认关闭以
-保持既有“单轮 prompt → JSON”行为。
+工具调用循环在 `model_client.generate_with_tools`（OpenAI 兼容 `tools`，GLM 支持）。生成路径
+（初稿 / 测试迁移）以 `core/utils.call_model_maybe_tools` 复用同一循环：有工具箱走带工具对话，
+否则回退单轮 `generate`。
 
-## 12. 提示词的单一事实源
+## 12. 扩展思考
+
+`model.thinking: true`（现为默认）让模型在迁移/修复这类需要分步推理的硬任务上先想后写；流式下
+`reasoning_content` 单独实时回显，只把正式 `content` 累积为返回值，故返回仍是干净 JSON
+（见 `model_client._generate_stream`）。不需要时把 `thinking` 置 `false` 即可。
+
+## 13. 提示词的单一事实源
 
 `skills/_shared/` 下用三个片段集中表达重复的铁律，各 skill 通过 `{{include: _shared/xxx.md}}`
 引用（展开见 `Config.read_skill`），避免多份提示词抄写漂移：
@@ -350,3 +362,24 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 - `operator_contract.md`：算子语义为基准，测试适配算子真实形态；
 - `host_test_contract.md`：host 测试逐条打印、expected 独立、失败必返回非零；
 - `kernel_spec_contract.md`：kernel_spec 槽位 / IO 1~8 / dtype / golden 独立。
+
+## 14. 示例库扩充（make-example，curation）
+
+few-shot 检索（第 4 节 / `core/example_retrieval.py`）只有在示例库够大够普遍时才挑得动。示例是
+金标准，因此不手写，而是用 `make-example` 把 `repos/accl` 里**已迁移并通过测试**的算子晋升为示例：
+
+```bash
+python3 main.py make-example                    # 列出可晋升候选
+python3 main.py make-example clamp sort3 minmax  # 晋升指定算子
+python3 main.py make-example --all --overwrite   # 全量刷新
+```
+
+实现见 `core/example_promote.py`，把该算子的 CCCL 源头 / ACCL 头 / CCCL 测试 / ACCL host 测试 /
+kernel_spec 复制进 `examples/`。要点：
+
+- 这是**人触发的 curation**（把已验证的*输出*沉淀为可复用的*输入*），不破坏运行时 I/O 边界：
+  agent 迁移时仍只读 `cccl + examples`、只写 `accl + outputs`。
+- **质量门禁**：ACCL 头须含 guard、host 测试须经 `validate_host_test_code`（失败必返回非零）、
+  kernel_spec 须经 `validate_kernel_spec`。门禁不过的测试被挡在库外（头若有效仍晋升）。
+  实测已拦下 `minmax` 的「假绿」host 测试（只打印 `FAIL` 却始终 `return 0`）。
+- 检索生成时默认 `exclude_self`：迁 X 不会拿 X 自己的答案当示例，避免评测泄漏。

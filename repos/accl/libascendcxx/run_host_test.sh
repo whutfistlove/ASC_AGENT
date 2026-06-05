@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host test for min. (生成自 core/scaffold_scripts.py)
+# Host test for minmax. (生成自 core/scaffold_scripts.py)
 
 # ---- 统一环境准备（core/scaffold_env.py 生成，host/kernel 共用）----
 if command -v conda >/dev/null 2>&1; then
@@ -44,5 +44,5 @@ fi
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-make min_host_test
-ctest -R "host\.min$" -V
+make minmax_host_test
+ctest -R "host\.minmax$" -V

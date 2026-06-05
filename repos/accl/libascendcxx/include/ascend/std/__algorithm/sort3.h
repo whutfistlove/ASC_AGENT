@@ -22,23 +22,19 @@ _ASCEND_STD_BEGIN
 // result is exact for integral types and order-preserving for floating point,
 // so the migrator should pick dtype=int32_t for the integer slices.
 template <typename _Tp>
-_ASCEND_AICORE_FN constexpr void sort3(_Tp __a, _Tp __b, _Tp __c, _Tp& __lo, _Tp& __mid, _Tp& __hi)
-{
+_ASCEND_AICORE_FN constexpr void sort3(_Tp __a, _Tp __b, _Tp __c, _Tp& __lo, _Tp& __mid, _Tp& __hi) {
   // Three compare-exchanges sort (a, b, c) into ascending order in place.
-  if (__b < __a)
-  {
+  if (__b < __a) {
     _Tp __t = __a;
     __a     = __b;
     __b     = __t;
   }
-  if (__c < __a)
-  {
+  if (__c < __a) {
     _Tp __t = __a;
     __a     = __c;
     __c     = __t;
   }
-  if (__c < __b)
-  {
+  if (__c < __b) {
     _Tp __t = __b;
     __b     = __c;
     __c     = __t;
@@ -50,4 +46,4 @@ _ASCEND_AICORE_FN constexpr void sort3(_Tp __a, _Tp __b, _Tp __c, _Tp& __lo, _Tp
 
 _ASCEND_STD_END
 
-#endif // LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_SORT3_H_
+#endif  // LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_SORT3_H_

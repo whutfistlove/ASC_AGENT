@@ -1,4 +1,4 @@
-// auto-workload=full (n=16384, cores=8, tiles=32x64, inputs=2, outputs=2)
+// auto-workload=full (n=16384, cores=8, tiles=32x64, inputs=2, outputs=2, dtype=float)
 #include "kernel_operator.h"
 #include "ascend/std/__algorithm/minmax.h"
 
@@ -54,13 +54,13 @@ extern "C" __global__ __aicore__ void minmax_kernel(GM_ADDR in0_gm, GM_ADDR in1_
             (void)y_val;
             (void)in0_val;
             (void)in1_val;
-            float out0_val = 0.0f;
-            float out1_val = 0.0f;
+            float out0_val = (float)0;
+            float out1_val = (float)0;
             float& z_val = out0_val;
             (void)z_val;
             (void)out0_val;
             (void)out1_val;
-            { auto res = ascend::std::minmax(in0_val, in1_val); out0_val = res.first; out1_val = res.second; }
+            { auto pr = ascend::std::minmax(in0_val, in1_val); out0_val = pr.first; out1_val = pr.second; }
             out0Local.SetValue(i, out0_val);
             out1Local.SetValue(i, out1_val);
         }

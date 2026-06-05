@@ -1,4 +1,4 @@
-// auto-workload=full (n=16384, cores=8, inputs=2, outputs=2)
+// auto-workload=full (n=16384, cores=8, inputs=2, outputs=2, dtype=float)
 #include "acl/acl.h"
 #include "host.h"
 #include "ascend/std/__algorithm/minmax.h"
@@ -37,7 +37,7 @@ int main()
     (void)h_x;
     (void)h_y;
     for (size_t i = 0; i < n; ++i) {
-        { h_x[i] = static_cast<float>(i % 97) - 40.0f; h_y[i] = static_cast<float>((i * 3) % 97) - 50.0f; }
+        { h_in0[i] = static_cast<float>(i % 97) - 40.0f; h_in1[i] = static_cast<float>((i * 3) % 97) - 50.0f; }
     }
 
     void* d_in0 = nullptr;
@@ -57,7 +57,7 @@ int main()
     CHECK_ACL(aclrtMemcpy(h_out0.data(), bytes, d_out0, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
     CHECK_ACL(aclrtMemcpy(h_out1.data(), bytes, d_out1, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
 
-    constexpr float eps = 1e-5f;
+    constexpr float eps = (float)1e-5;
     long print_samples = 8;
     if (const char* __ps = std::getenv("KERNEL_PRINT_SAMPLES")) {
         if (*__ps) print_samples = std::atol(__ps);
@@ -72,13 +72,13 @@ int main()
         (void)y_ref;
         (void)in0_ref;
         (void)in1_ref;
-        float expected0 = 0.0f;
-        float expected1 = 0.0f;
+        float expected0 = (float)0;
+        float expected1 = (float)0;
         float& expected = expected0;
         (void)expected;
         (void)expected0;
         (void)expected1;
-        { expected0 = (y_ref < x_ref) ? y_ref : x_ref; expected1 = (y_ref < x_ref) ? x_ref : y_ref; }
+        { expected0 = (in1_ref < in0_ref) ? in1_ref : in0_ref; expected1 = (in0_ref < in1_ref) ? in1_ref : in0_ref; }
         float got0 = h_out0[i];
         if (print_samples < 0 || static_cast<long>(i) < print_samples) {
             std::cout << "[kernel][minmax][" << i << "][out0]" << " in0=" << in0_ref << " in1=" << in1_ref

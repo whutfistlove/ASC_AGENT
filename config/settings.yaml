@@ -33,14 +33,25 @@ model:
   base_url: "${ZHIPU_BASE_URL:-https://open.bigmodel.cn/api/paas/v4/chat/completions}"
   temperature: 0.6
   max_tokens: 65536
-  thinking: false          # 置 true 时请求体加 {"thinking": {"type": "enabled"}}
+  # 开启扩展思考：迁移/修复是需要分步推理的硬任务，强制纯 JSON 会把推理压没。
+  # 请求体加 {"thinking": {"type": "enabled"}}，流式时 reasoning_content 单独回显、
+  # 只把正式 content 累积为返回值，故返回仍是干净 JSON（见 model_client._generate_stream）。
+  thinking: true
   response_format_json: true
   stream: true             # 流式调用；配合 --show-model-io 可实时逐字回显
   # P1：测试反馈修复时是否允许模型调用取证/自检工具（read_repo_file / grep_repo /
   # host_syntax_check / extract_error_lines）。默认关闭以保持既有行为；置 true 后
   # 模型可先调查再产出修复，单次成功率更高。max_tool_rounds 限制每次最多工具轮数。
-  tools_enabled: false
+  tools_enabled: true
   max_tool_rounds: 4
+  # best-of-N：一次采样多个候选，用便宜的校验器（头文件结构 / host 测试 g++ 自检）择优。
+  # 1=单发（默认，行为不变）；>1 提升一次成功率，但模型调用数成倍增加。
+  draft_samples: 1
+
+# few-shot 检索：按算子相关度从 examples/ 选最贴近的示例（示例库越大越受益）。
+few_shot:
+  retrieval: true          # 关掉则回退到 examples 配置顺序
+  top_k: 2
 
 repo_verify:
   # 留空则自动探测 conda.sh；也可显式写绝对路径

@@ -24,8 +24,9 @@ from pathlib import Path
 
 import yaml
 
-from core.agent_tools import AgentToolbox
+from core.agent_tools import build_toolbox, distill_error_lines
 from core.config import Config
+from core.example_promote import discover_promotable, promote_operator
 from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
 from core.model_client import MockModelClient, build_model_client
 from core.operator_test import OperatorTestRunner
@@ -190,6 +191,8 @@ def _maybe_migrate_tests(
             cccl_test_text=cccl_test_path.read_text(encoding="utf-8"),
             verbose=verbose,
             show_model_io=getattr(args, "show_model_io", False),
+            toolbox=_maybe_build_toolbox(config),  # 生成期取证/自检（默认关闭→None）
+            max_tool_rounds=config.model_max_tool_rounds,
         )
     except Exception as exc:  # 迁移失败不应中断流程，回退模板
         if verbose:
@@ -291,6 +294,21 @@ def _safe_read_text(path: Path, max_chars: int = 12000) -> str:
     return text[:max_chars] + "\n\n[truncated]"
 
 
+def _read_and_distill_log(path_str: str, *, max_chars: int = 8000) -> str:
+    """读整份日志再蒸馏出 error/warning 行及上下文。
+
+    比旧的「按 12k 字节硬截断」更可靠：cannsim/编译日志常有数万行，真正的报错往往在
+    末尾或中段，硬截断会把它截没；蒸馏只保留有信号的行，既省 token 又不丢现场。
+    """
+    if not path_str:
+        return ""
+    p = Path(path_str)
+    if not p.exists():
+        return ""
+    text = p.read_text(encoding="utf-8", errors="replace")
+    return distill_error_lines(text, max_chars=max_chars).strip()
+
+
 def _build_test_feedback_text(test_result: dict) -> str:
     lines: list[str] = []
     host_state = "PASSED" if test_result.get("host_passed") else "FAILED"
@@ -298,17 +316,13 @@ def _build_test_feedback_text(test_result: dict) -> str:
     lines.append(f"host_result: {host_state}")
     lines.append(f"kernel_result: {kernel_state}")
 
-    host_log = test_result.get("host_log_path")
-    if host_log:
-        host_text = _safe_read_text(Path(host_log))
-        if host_text.strip():
-            lines.append("\n[host_log]\n" + host_text)
+    host_text = _read_and_distill_log(test_result.get("host_log_path"))
+    if host_text:
+        lines.append("\n[host_log（已蒸馏 error 行）]\n" + host_text)
 
-    kernel_log = test_result.get("kernel_log_path")
-    if kernel_log:
-        kernel_text = _safe_read_text(Path(kernel_log))
-        if kernel_text.strip():
-            lines.append("\n[kernel_log]\n" + kernel_text)
+    kernel_text = _read_and_distill_log(test_result.get("kernel_log_path"))
+    if kernel_text:
+        lines.append("\n[kernel_log（已蒸馏 error 行）]\n" + kernel_text)
 
     if test_result.get("error"):
         lines.append("\n[test_runner_error]\n" + str(test_result["error"]))
@@ -377,7 +391,8 @@ def cmd_run(args) -> int:
         settings_path=settings_path, rounds_to_pass=args.mock_rounds,
     )
     pipeline = Pipeline(config, model_client, verifier, verbose=not args.quiet,
-                        show_model_io=getattr(args, "show_model_io", False))
+                        show_model_io=getattr(args, "show_model_io", False),
+                        toolbox=_maybe_build_toolbox(config))
     result = pipeline.run(Path(args.input))
 
     if args.with_tests:
@@ -428,15 +443,31 @@ def cmd_run(args) -> int:
 
 
 def _maybe_build_toolbox(config: Config):
-    """启用 model.tools_enabled 时构建模型工具箱（取证 + host 自检）；否则返回 None。"""
-    if not config.model_tools_enabled:
-        return None
-    include_dir = Path(config.target_repo) / "libascendcxx" / "include"
-    return AgentToolbox(
-        target_repo=Path(config.target_repo),
-        output_dir=config.output_dir,
-        host_include_dirs=[include_dir],
-    )
+    """启用 model.tools_enabled（且非 mock）时构建模型工具箱；否则返回 None。
+
+    迁移 / 测试迁移 / 测试反馈修复三条链路共用 core.agent_tools.build_toolbox（单一事实源）。
+    """
+    return build_toolbox(config)
+
+
+def _format_attempt_history(rounds_log: list[dict]) -> str:
+    """把历轮（根因 / 改了哪些件 / 是否通过）压成紧凑摘要，回喂模型形成跨轮记忆。
+
+    没有它时每轮都是「无状态盲改」，模型可能反复提交同一个被证明无效的修复；有了它，
+    模型能看到「上轮按 X 根因改了 header 仍失败」，从而换思路而不是原地打转。
+    """
+    if not rounds_log:
+        return ""
+    parts: list[str] = []
+    for r in rounds_log:
+        applied = ", ".join(r.get("applied") or []) or "无改动"
+        outcome = "通过" if r.get("passed") else "仍失败"
+        rc = r.get("root_cause", "") or "未判定"
+        line = f"- 第{r.get('round')}轮：根因={rc}；改动=[{applied}]；结果={outcome}"
+        if r.get("test_error"):
+            line += f"；runner错误={str(r['test_error'])[:120]}"
+        parts.append(line)
+    return "\n".join(parts)
 
 
 def _run_convert_test_loop(args, config: Config, model_client, result, write_to_repo: bool) -> dict:
@@ -530,6 +561,7 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
                 kernel_spec=cur_artifacts.get("kernel_spec"),
                 test_feedback_text=test_text,
                 round_index=r,
+                attempt_history=_format_attempt_history(rounds_log),  # 跨轮记忆
                 verbose=not args.quiet,
                 show_model_io=getattr(args, "show_model_io", False),
                 toolbox=toolbox,
@@ -600,7 +632,8 @@ def cmd_convert(args) -> int:
 
     # convert 不经过 git，verifier 用 None 占位即可。
     pipeline = Pipeline(config, model_client, verifier=None, verbose=not args.quiet,
-                        show_model_io=getattr(args, "show_model_io", False))
+                        show_model_io=getattr(args, "show_model_io", False),
+                        toolbox=_maybe_build_toolbox(config))
     write_to_repo = not args.no_write_target
     result = pipeline.convert_only(Path(args.input), write_to_repo=write_to_repo)
 
@@ -649,7 +682,8 @@ def cmd_batch(args) -> int:
             model_client = MockModelClient()
             verifier = FakeVerifier(config, rounds_to_pass=args.mock_rounds, verbose=not args.quiet)
         pipeline = Pipeline(config, model_client, verifier, verbose=not args.quiet,
-                            show_model_io=getattr(args, "show_model_io", False))
+                            show_model_io=getattr(args, "show_model_io", False),
+                            toolbox=_maybe_build_toolbox(config))
         one = pipeline.run(Path(item))
         if args.with_tests:
             artifacts = None
@@ -751,6 +785,41 @@ def cmd_test(args) -> int:
     if args.prepare_tests_only:
         return 0
     return 0 if _tests_all_passed(result, run_host, run_kernel, test_dry_run=args.test_dry_run) else 2
+
+
+def cmd_make_example(args) -> int:
+    """把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例（curation 步骤）。"""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+
+    names = list(args.operators or [])
+    if args.all:
+        names = discover_promotable(config)
+        if not names:
+            print("没有可晋升的算子（目标仓尚无已迁移的 ACCL 头）。")
+            return 1
+    if not names:
+        print("请指定算子名，或用 --all 晋升全部已迁移算子。可晋升候选：")
+        for n in discover_promotable(config):
+            print(f"  - {n}")
+        return 2
+
+    ok = 0
+    for name in names:
+        try:
+            r = promote_operator(
+                config, name, overwrite=args.overwrite,
+                validate=not args.no_validate, include_test=not args.headers_only,
+            )
+            ok += 1
+            tag_h = "头✓" if r["header_written"] else "头(跳过)"
+            tag_t = "—" if args.headers_only else ("测试✓" if r["test_written"] else "测试(跳过)")
+            extra = f"  [{'; '.join(r['skipped'])}]" if r["skipped"] else ""
+            print(f"[promote] {name}（{r['module']}）-> examples/  {tag_h} {tag_t}{extra}")
+        except Exception as exc:
+            print(f"[skip] {name}: {type(exc).__name__}: {exc}")
+    print(f"\n完成：{ok}/{len(names)} 个算子已晋升为示例。")
+    return 0 if ok else 1
 
 
 def cmd_selftest(args) -> int:
@@ -875,6 +944,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_self = sub.add_parser("selftest", help="离线冒烟测试")
     p_self.set_defaults(func=cmd_selftest)
+
+    p_mk = sub.add_parser(
+        "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"
+    )
+    p_mk.add_argument("operators", nargs="*", help="算子名（如 clamp minmax sort3）；留空且不加 --all 时列出候选")
+    p_mk.add_argument("--all", action="store_true", help="晋升目标仓里全部已迁移算子")
+    p_mk.add_argument("--overwrite", action="store_true", help="覆盖 examples/ 里已存在的同名示例")
+    p_mk.add_argument("--headers-only", action="store_true", help="只晋升头对，不带测试三元组")
+    p_mk.add_argument("--no-validate", action="store_true", help="跳过质量门禁（不建议）")
+    p_mk.set_defaults(func=cmd_make_example)
 
     return parser
 

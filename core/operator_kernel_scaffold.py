@@ -491,5 +491,43 @@ class KernelScaffoldBuilder:
             ")\n"
         )
 
+    @staticmethod
+    def npu_lib_cmake() -> str:
+        """`cmake/npu_lib.cmake`：定位 CANN 的 ascendc_kernel_cmake 并声明 kernel 库。
+
+        历史上这份文件以「目标仓 max_example/cmake 拷贝到其它算子」的方式复用——等于把
+        目标仓（输出）当成模板输入，违反「输入只在源仓/examples、输出只在目标仓/outputs」。
+        现与其它脚手架一致由代码生成（单一事实源），目标仓里的 cmake/ 纯属输出。
+        """
+        return (
+            "# *****************************************************************************\n"
+            "# Copyright (c) 2026 Xiong Shengwu Group at Wuhan University of Technology. All Rights Reserved.\n"
+            "# Author: Lu Xiongbo <luxiongbo@whut.edu.cn>\n"
+            "# Create: 2026-01-19\n"
+            "#\n"
+            '# Licensed under the Apache License, Version 2.0 (the "License");\n'
+            "# you may not use this file except in compliance with the License.\n"
+            "# You may obtain a copy of the License at\n"
+            "#\n"
+            "# http://www.apache.org/licenses/LICENSE-2.0\n"
+            "#\n"
+            "# Unless required by applicable law or agreed to in writing, software\n"
+            '# distributed under the License is distributed on an "AS IS" BASIS,\n'
+            "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n"
+            "# See the License for the specific language governing permissions and\n"
+            "# limitations under the License.\n"
+            "# *****************************************************************************\n"
+            "\n"
+            "if(EXISTS ${ASCEND_CANN_PACKAGE_PATH}/compiler/tikcpp/ascendc_kernel_cmake)\n"
+            "    set(ASCENDC_CMAKE_DIR ${ASCEND_CANN_PACKAGE_PATH}/compiler/tikcpp/ascendc_kernel_cmake)\n"
+            "elseif(EXISTS ${ASCEND_CANN_PACKAGE_PATH}/tools/tikcpp/ascendc_kernel_cmake)\n"
+            "    set(ASCENDC_CMAKE_DIR ${ASCEND_CANN_PACKAGE_PATH}/tools/tikcpp/ascendc_kernel_cmake)\n"
+            "else()\n"
+            '    message(FATAL_ERROR "ascendc_kernel_cmake does not exist ,please check whether the cann package is installed")\n'
+            "endif()\n"
+            "include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)\n"
+            "ascendc_library(ascendc_kernels_${RUN_MODE} SHARED ${KERNEL_FILES})\n"
+        )
+
     # shell 脚本生成已拆分到 core/scaffold_scripts.py（run_test_sh / host_run_test_sh /
     # full_project_run_sh），本类专注 AscendC/ACL 的 C++ 源与 CMake 生成。

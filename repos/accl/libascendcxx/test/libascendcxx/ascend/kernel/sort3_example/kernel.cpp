@@ -77,7 +77,7 @@ extern "C" __global__ __aicore__ void sort3_kernel(GM_ADDR in0_gm, GM_ADDR in1_g
             (void)out0_val;
             (void)out1_val;
             (void)out2_val;
-            { int32_t a = in0_val, b = in1_val, c = in2_val; int32_t lo, mid, hi; ascend::std::sort3(a, b, c, lo, mid, hi); out0_val = lo; out1_val = mid; out2_val = hi; }
+            { ascend::std::sort3(in0_val, in1_val, in2_val, out0_val, out1_val, out2_val); }
             out0Local.SetValue(i, out0_val);
             out1Local.SetValue(i, out1_val);
             out2Local.SetValue(i, out2_val);

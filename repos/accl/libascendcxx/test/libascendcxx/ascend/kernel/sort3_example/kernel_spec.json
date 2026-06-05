@@ -1,7 +1,7 @@
 {
-  "input_init": "h_in0[i] = (i * 3) % 11 - 5; h_in1[i] = (i * 7 + 2) % 13 - 6; h_in2[i] = (i * 11 + 5) % 17 - 8;",
-  "element_op_code": "int32_t a = in0_val, b = in1_val, c = in2_val; int32_t lo, mid, hi; ascend::std::sort3(a, b, c, lo, mid, hi); out0_val = lo; out1_val = mid; out2_val = hi;",
-  "golden_code": "float lo = in0_ref; if (in1_ref < lo) lo = in1_ref; if (in2_ref < lo) lo = in2_ref; float hi = in0_ref; if (in1_ref > hi) hi = in1_ref; if (in2_ref > hi) hi = in2_ref; expected0 = lo; expected2 = hi; expected1 = in0_ref + in1_ref + in2_ref - lo - hi;",
+  "input_init": "h_in0[i] = static_cast<int32_t>((i * 7 + 3) % 19) - 9; h_in1[i] = static_cast<int32_t>((i * 13 + 5) % 23) - 11; h_in2[i] = static_cast<int32_t>((i * 11 + 1) % 17) - 8;",
+  "element_op_code": "ascend::std::sort3(in0_val, in1_val, in2_val, out0_val, out1_val, out2_val);",
+  "golden_code": "int32_t _a = in0_ref, _b = in1_ref, _c = in2_ref; if (_b < _a) { int32_t _t = _a; _a = _b; _b = _t; } if (_c < _a) { int32_t _t = _a; _a = _c; _c = _t; } if (_c < _b) { int32_t _t = _b; _b = _c; _c = _t; } expected0 = _a; expected1 = _b; expected2 = _c;",
   "gm_inputs": 3,
   "gm_outputs": 3,
   "dtype": "int32_t"
