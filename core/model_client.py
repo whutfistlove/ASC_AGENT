@@ -31,6 +31,19 @@ class BaseModelClient(Protocol):
         ...
 
 
+def _parse_tool_args(raw) -> dict:
+    """tool_call.arguments 可能是 JSON 字符串或 dict，统一成 dict。"""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            obj = json.loads(raw)
+            return obj if isinstance(obj, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 # --------------------------------------------------------------------------- #
 # 真实实现：智谱（OpenAI 兼容 REST 接口）
 # --------------------------------------------------------------------------- #
@@ -147,6 +160,88 @@ class ZhipuModelClient:
             return self._generate_stream(requests, headers, payload, on_delta)
         return self._generate_once(requests, headers, payload)
 
+    def generate_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        tool_schemas: list,
+        dispatch,
+        max_tool_rounds: int = 4,
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """带工具调用的多轮对话（OpenAI 兼容 tools）。
+
+        模型可多轮调用 read_repo_file / grep_repo / host_syntax_check / extract_error_lines
+        取证与自检；无更多 tool_calls 时返回其最终 content（应为 JSON）。dispatch(name, args)
+        由调用方提供（通常是 AgentToolbox.dispatch），返回工具结果字符串。
+        """
+        import requests  # 延迟导入
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key()}",
+            "Content-Type": "application/json",
+        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        for _ in range(max_tool_rounds):
+            payload = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "stream": False,
+                "tools": tool_schemas,
+            }
+            msg = self._post_chat(requests, headers, payload)
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                content = msg.get("content") or ""
+                if on_delta and content:
+                    on_delta(content)
+                return content
+            messages.append(
+                {"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls}
+            )
+            for tc in tool_calls:
+                fn = tc.get("function", {}) or {}
+                args = _parse_tool_args(fn.get("arguments"))
+                result = dispatch(fn.get("name", ""), args)
+                if on_delta:
+                    on_delta(f"\n[tool:{fn.get('name','')}] -> {str(result)[:200]}\n")
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc.get("id", ""), "content": str(result)}
+                )
+        # 超过最大工具轮数：再要一次「不带工具」的最终回答（强制 JSON）。
+        final_payload = {
+            "model": self.model_name,
+            "messages": messages
+            + [{"role": "user", "content": "请基于以上调查结果，现在只输出最终 JSON 对象。"}],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        if self.response_format_json:
+            final_payload["response_format"] = {"type": "json_object"}
+        msg = self._post_chat(requests, headers, final_payload)
+        content = msg.get("content") or ""
+        if on_delta and content:
+            on_delta(content)
+        return content
+
+    def _post_chat(self, requests, headers: dict, payload: dict) -> dict:
+        """非流式 POST，返回 choices[0].message（含可能的 tool_calls）。"""
+        resp = requests.post(self.base_url, headers=headers, json=payload, timeout=self.timeout)
+        if resp.status_code != 200:
+            raise RuntimeError(f"智谱接口返回 {resp.status_code}: {resp.text[:500]}")
+        data = resp.json()
+        try:
+            return data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"无法从智谱响应中解析 message: {data}") from exc
+
     def _generate_once(self, requests, headers: dict, payload: dict) -> str:
         resp = requests.post(self.base_url, headers=headers, json=payload, timeout=self.timeout)
         if resp.status_code != 200:
@@ -212,8 +307,11 @@ class MockModelClient:
       用于无网络的端到端演示，顺带验证 guard 的端到端串联。
     """
 
-    def __init__(self, responses: Optional[list[str]] = None):
+    def __init__(self, responses: Optional[list[str]] = None, tool_script: Optional[list[dict]] = None):
         self._responses = list(responses) if responses else None
+        # tool_script：[{"name": "read_repo_file", "arguments": {...}}, ...]，
+        # generate_with_tools 会先逐个 dispatch（模拟模型取证），再返回最终 JSON。
+        self._tool_script = list(tool_script) if tool_script else None
         self.calls: list[dict] = []
 
     def generate(
@@ -229,6 +327,22 @@ class MockModelClient:
                 raise AssertionError("MockModelClient 预设响应已耗尽")
             return self._responses.pop(0)
         return self._auto_response(user_content)
+
+    def generate_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        tool_schemas: list,
+        dispatch,
+        max_tool_rounds: int = 4,
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """离线模拟带工具的对话：先按 tool_script 调用工具，再返回最终响应。"""
+        self.calls.append({"system_prompt": system_prompt, "user_content": user_content, "tools": True})
+        for call in (self._tool_script or [])[:max_tool_rounds]:
+            dispatch(call.get("name", ""), call.get("arguments", {}))
+        return self.generate(system_prompt=system_prompt, user_content=user_content, on_delta=on_delta)
 
     @staticmethod
     def _extract_field(text: str, label: str) -> str:

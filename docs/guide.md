@@ -1,7 +1,8 @@
 # ASC_agent 使用指南
 
 本文档集中说明 ASC_agent 的环境准备、常用工作流、头文件迁移流程、测试迁移流程、
-host/kernel 测试逻辑以及失败修复闭环。
+host/kernel 测试逻辑、失败修复闭环、失败分类（环境 vs 代码）、模型取证工具，以及
+提示词的单一事实源。
 
 ## 1. 环境准备
 
@@ -29,6 +30,13 @@ cannsim -s Ascend950
 
 如果本机 CANN 支持的 SOC 名称不同，需要调整
 `core/operator_kernel_scaffold.py` 中的 `KERNEL_SOC_VERSION`。
+
+运行测试前，ASC_agent 会做若干**环境自愈**（`core/build_env.py`），无需手工干预：
+
+- `cannsim` / `llvm-objdump` 常只在 `source set_env` 后才上 PATH；运行器会在 CANN 安装目录
+  探测它们并补进子进程 PATH，避免“装了却找不到”；
+- 项目改名/移动后残留的过期 CMake 缓存（`CMAKE_CACHEFILE_DIR` 不匹配）会被自动清理；
+- 若 `cannsim` 确实不可用，kernel 测试标记为 **SKIPPED**（不计为失败），host 测试照常进行。
 
 ## 2. 常用工作流
 
@@ -158,8 +166,18 @@ repos/accl/libascendcxx/test/libascendcxx/ascend/kernel/<algo>_example/
 - `run_test.sh`：执行 cmake、make 和 `cannsim record`；
 - `kernel_spec.json`：模型填充的算子相关槽位。
 
-其中，`core/operator_kernel_scaffold.py` 负责生成 AscendC/ACL kernel 脚手架；
-`core/operator_test.py` 负责文件准备、命令执行、日志保存、超时处理和通过/失败判定。
+职责划分（拆分后的脚手架，单一事实源）：
+
+- `core/operator_kernel_scaffold.py`：AscendC/ACL 的 **C++ 源 + CMake** 生成；
+- `core/scaffold_scripts.py`：**shell 运行脚本**生成（kernel `run_test.sh`、host
+  `run_host_test.sh`、full_project `run_kernel_full.sh`）；
+- `core/scaffold_env.py`：三类脚本**共用的统一环境准备片段**；
+- `core/build_env.py`：构建环境探测与自愈（过期缓存、CANN 工具 PATH）；
+- `core/operator_test.py`：文件准备、命令执行、日志保存、超时处理、失败分类和通过/失败判定。
+
+host 侧不再依赖签入的 `000_set_env.sh` / `001_setup_build.sh`，而是运行生成的
+`run_host_test.sh`（同样源自 `scaffold_scripts` + `scaffold_env`）。旧的 `000`–`004`
+脚本已删除。
 
 ## 7. Kernel Spec 契约
 
@@ -288,3 +306,47 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 - 模型输出必须是严格 JSON 对象，不能带 Markdown 或额外分析文本；
 - `host_test_code: null` 表示不修改 host 测试，不会被写成源码文本；
 - 新的 host 测试必须保证失败时返回非零。
+
+修复循环还会**提前止损**，避免空转烧模型调用：
+
+- 失败被判为 **env（环境问题）** 时直接跳过修复循环（见第 10 节）；
+- 某轮回传模型的输入与上一轮**完全相同**（无新信息）→ 停止；
+- 模型某轮**未返回任何可改动件** → 停止；
+- 达到 `retry.max_fix_rounds`（默认 5）→ 停止。
+
+## 10. 失败分类（环境 vs 代码）
+
+`core/failure_triage.py` 在每次失败后给出分类，避免把“改代码无用”的环境问题反复回传模型：
+
+- **env**：构建/工具链/驱动问题——过期 CMakeCache、缺 `llvm-objdump`、缺 `cannsim`、
+  驱动符号 `undefined reference to drv*` 等。此类**不进**模型修复循环，直接报“需修环境”。
+- **code**：编译错误（`no matching function`、类型不符…）、数值 `Mismatch` 等，模型修复有意义。
+- **unknown**：信息不足。
+
+判定时**代码特征优先于环境特征**（真正的编译/数值错总值得回传模型；纯环境失败通常不含这些行）。
+能自愈的环境问题（过期缓存、CANN 工具 PATH）由 `core/build_env.py` 在执行前主动修复；缺 `cannsim`
+则把 kernel 标为 SKIPPED（不计失败）。
+
+## 11. 模型工具（取证 + 自检，默认关闭）
+
+把 `config/settings.yaml` 里 `model.tools_enabled` 置 `true`（并设 `max_tool_rounds`），
+测试反馈修复时模型可先调用工具调查再产出修复（`core/agent_tools.py`，沙箱限制在目标仓 / outputs）：
+
+| 工具 | 作用 |
+|------|------|
+| `read_repo_file` | 按需读目标仓任意头（如 `__config`、sibling 算子），不必全塞进 prompt |
+| `grep_repo` | 查宏/符号的真实定义（如 `_ASCEND_AICORE_FN`） |
+| `host_syntax_check` | 用 `g++ -fsyntax-only` 先自检 host 产物，省一整轮往返 |
+| `extract_error_lines` | 从数万行日志里只抽 error/warning 行回喂 |
+
+工具调用循环在 `model_client.generate_with_tools`（OpenAI 兼容 `tools`，GLM 支持）。默认关闭以
+保持既有“单轮 prompt → JSON”行为。
+
+## 12. 提示词的单一事实源
+
+`skills/_shared/` 下用三个片段集中表达重复的铁律，各 skill 通过 `{{include: _shared/xxx.md}}`
+引用（展开见 `Config.read_skill`），避免多份提示词抄写漂移：
+
+- `operator_contract.md`：算子语义为基准，测试适配算子真实形态；
+- `host_test_contract.md`：host 测试逐条打印、expected 独立、失败必返回非零；
+- `kernel_spec_contract.md`：kernel_spec 槽位 / IO 1~8 / dtype / golden 独立。

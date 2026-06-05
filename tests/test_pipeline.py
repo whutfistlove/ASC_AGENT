@@ -14,7 +14,7 @@ def _make_config(tmp_path) -> Config:
     proj = tmp_path
     (proj / "skills").mkdir()
     (proj / "skills" / "rewrite_initial.md").write_text("initial prompt", encoding="utf-8")
-    (proj / "skills" / "rewrite_fix_from_log.md").write_text("fix prompt", encoding="utf-8")
+    (proj / "skills" / "rewrite_fix_from_log_and_test.md").write_text("fix prompt", encoding="utf-8")
 
     ex = proj / "examples" / "headers"
     ex.mkdir(parents=True)

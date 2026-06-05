@@ -200,7 +200,7 @@ def migrate_operator_tests(
     )
     save_text(out / "test_migrate_request.md", request_text)
 
-    prompt_text = config.skill_path(prompt_filename).read_text(encoding="utf-8")
+    prompt_text = config.read_skill(prompt_filename)
     if verbose:
         print(f"开始调用模型迁移 {algo_name} 的测试代码...")
     raw = call_model_with_io(

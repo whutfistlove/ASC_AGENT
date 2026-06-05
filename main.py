@@ -24,6 +24,7 @@ from pathlib import Path
 
 import yaml
 
+from core.agent_tools import AgentToolbox
 from core.config import Config
 from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
 from core.model_client import MockModelClient, build_model_client
@@ -244,11 +245,28 @@ def _tests_all_passed(test_result: dict, run_host: bool, run_kernel: bool, test_
         return True
     if test_dry_run:
         return True
-    if run_host and not test_result.get("host_passed", False):
+    # 被预检跳过的一侧（如无 cannsim 跳过 kernel）不计为失败。
+    if (
+        run_host
+        and not test_result.get("host_passed", False)
+        and test_result.get("host_failure_kind") != "skipped"
+    ):
         return False
-    if run_kernel and not test_result.get("kernel_passed", False):
+    if (
+        run_kernel
+        and not test_result.get("kernel_passed", False)
+        and test_result.get("kernel_failure_kind") != "skipped"
+    ):
         return False
     return True
+
+
+def _is_env_blocked(test_result: dict) -> bool:
+    """测试失败是否属于「环境问题」（改代码无用，不应回传模型修复）。"""
+    return "env" in (
+        test_result.get("host_failure_kind"),
+        test_result.get("kernel_failure_kind"),
+    )
 
 
 def _resolve_target_relpath_for_test(args, config: Config) -> str:
@@ -383,6 +401,7 @@ def cmd_run(args) -> int:
             and not args.prepare_tests_only
             and not _tests_all_passed(result.test_result, run_host, run_kernel, test_dry_run=args.test_dry_run)
             and not result.test_result.get("skipped")
+            and not _is_env_blocked(result.test_result)
         ):
             result.test_result["model_feedback_fix"] = _generate_model_fix_from_test_feedback(
                 args=args,
@@ -406,6 +425,18 @@ def cmd_run(args) -> int:
         ):
             return 2
     return 0
+
+
+def _maybe_build_toolbox(config: Config):
+    """启用 model.tools_enabled 时构建模型工具箱（取证 + host 自检）；否则返回 None。"""
+    if not config.model_tools_enabled:
+        return None
+    include_dir = Path(config.target_repo) / "libascendcxx" / "include"
+    return AgentToolbox(
+        target_repo=Path(config.target_repo),
+        output_dir=config.output_dir,
+        host_include_dirs=[include_dir],
+    )
 
 
 def _run_convert_test_loop(args, config: Config, model_client, result, write_to_repo: bool) -> dict:
@@ -444,6 +475,13 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
         return test_result
     if _tests_all_passed(test_result, run_host, run_kernel, test_dry_run=args.test_dry_run):
         return test_result
+    # 环境类失败：改代码无用，直接终止循环并明确标注（P0 止血）。
+    if _is_env_blocked(test_result):
+        test_result["fix_loop_skipped"] = (
+            "测试失败被判定为环境问题（如旧 CMake 缓存 / 缺 llvm-objdump / 缺驱动库 / 无 cannsim），"
+            "改代码无济于事，已跳过模型修复循环。请先修复环境后重试。"
+        )
+        return test_result
     if not write_to_repo:
         test_result["fix_loop_skipped"] = "需写回仓库才能闭环修复，请去掉 --no-write-target"
         return test_result
@@ -454,6 +492,8 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
     rounds_log: list[dict] = []
     # 当前可修复件：header(写在仓库) + host 测试 + kernel_spec（保存在内存里随轮更新）。
     cur_artifacts: dict = dict(artifacts) if artifacts else {}
+    last_signature = None  # 上一轮回传模型的输入签名，用于去重早停
+    toolbox = _maybe_build_toolbox(config)  # P1：启用后模型可取证/自检（默认关闭）
 
     for r in range(1, max_rounds + 1):
         if not args.quiet:
@@ -468,6 +508,14 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
             host_text = host_file.read_text(encoding="utf-8")
         else:
             host_text = cur_artifacts.get("host_test_code", "") or ""
+
+        # 去重早停：若本轮回传模型的输入与上一轮完全相同，模型只会给出相同结果，
+        # 继续调用纯属浪费（sort3 三轮 fix_request 字节相同即此症）。
+        signature = (header_text, host_text, json.dumps(cur_artifacts.get("kernel_spec"), sort_keys=True), test_text)
+        if signature == last_signature:
+            test_result["fix_loop_note"] = "本轮输入与上一轮相同，无新信息，停止修复（去重早停）。"
+            break
+        last_signature = signature
 
         try:
             # 关键：失败时模型可改 header / host 测试 / kernel_spec 任意子集；
@@ -484,6 +532,8 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
                 round_index=r,
                 verbose=not args.quiet,
                 show_model_io=getattr(args, "show_model_io", False),
+                toolbox=toolbox,
+                max_tool_rounds=config.model_max_tool_rounds,
             )
         except Exception as exc:  # 单轮模型/解析失败不应让整个流程崩
             rounds_log.append({"round": r, "error": f"{type(exc).__name__}: {exc}"})
@@ -500,6 +550,15 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
         if fix.get("kernel_spec"):
             cur_artifacts["kernel_spec"] = fix["kernel_spec"]
             applied.append("kernel_spec")
+
+        # 模型没给出任何可改动件：再测也是原样，直接停止（避免空转）。
+        if not applied:
+            rounds_log.append({
+                "round": r, "root_cause": fix.get("root_cause", ""), "applied": [],
+                "note": "模型未返回任何可改动件，停止修复",
+            })
+            result.rounds_used = r
+            break
 
         # 用最新 artifacts 重新生成测试并重测
         test_result = _run_operator_tests(
@@ -519,6 +578,10 @@ def _run_convert_test_loop(args, config: Config, model_client, result, write_to_
         })
         result.rounds_used = r
         if passed or test_result.get("error"):
+            break
+        # 改完代码后若失败转为环境类问题，继续改代码也无用，停止。
+        if _is_env_blocked(test_result):
+            test_result["fix_loop_note"] = "本轮修复后失败转为环境问题，停止修复。"
             break
 
     test_result["fix_rounds"] = rounds_log
@@ -609,6 +672,7 @@ def cmd_batch(args) -> int:
                 and not args.prepare_tests_only
                 and not _tests_all_passed(one.test_result, run_host, run_kernel, test_dry_run=args.test_dry_run)
                 and not one.test_result.get("skipped")
+                and not _is_env_blocked(one.test_result)
             ):
                 one.test_result["model_feedback_fix"] = _generate_model_fix_from_test_feedback(
                     args=args,
@@ -670,6 +734,7 @@ def cmd_test(args) -> int:
         and not args.prepare_tests_only
         and not _tests_all_passed(result, run_host, run_kernel, test_dry_run=args.test_dry_run)
         and not result.get("skipped")
+        and not _is_env_blocked(result)
     ):
         result["model_feedback_fix"] = _generate_model_fix_from_test_feedback(
             args=args,

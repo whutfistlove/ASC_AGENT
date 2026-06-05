@@ -17,9 +17,6 @@ add_executable(ascendc_kernels_bbit ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ${CMAKE
 target_compile_options(ascendc_kernels_bbit PRIVATE
     -O2 -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0 -Wall -Werror
 )
-target_link_options(ascendc_kernels_bbit PRIVATE
-    -Wl,--allow-shlib-undefined
-)
 target_link_libraries(ascendc_kernels_bbit PRIVATE
     host_intf_pub
     ascendc_kernels_npu

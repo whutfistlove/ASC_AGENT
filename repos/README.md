@@ -8,19 +8,19 @@ repos/
 ├── cccl/                                  # 源仓库（libcu++ 风格头文件 + 平行 test 树）
 │   └── libcudacxx/
 │       ├── include/cuda/std/
-│       │   ├── __algorithm/{max,min,swap,clamp,minmax,quad_fanout}.h
-│       │   │                                               # 算子头（待迁移）
+│       │   ├── __algorithm/{max,min,swap,clamp,minmax,quad_fanout,sort3}.h
+│       │   │                                               # 算子头（待迁移；sort3=合成复杂算子）
 │       │   ├── __numeric/{gcd,lcm,midpoint}.h             # 数值算子（二元/整数）
 │       │   └── __cccl/os.h                                # 宏类头文件示例
 │       └── test/std/                                       # CCCL 侧测试（语义基准，给模型迁移）
-│           ├── __algorithm/{max,min,swap,clamp,minmax,quad_fanout}.pass.cpp
+│           ├── __algorithm/{max,min,swap,clamp,minmax,quad_fanout,sort3}.pass.cpp
 │           │                                               # 头 <op>.h ↔ 测试 <op>.pass.cpp
 │           └── __numeric/{gcd,lcm,midpoint}.pass.cpp
 └── accl/                                  # 目标仓库（= 原 mylearn 的 libascendcxx，已整合测试链路）
     ├── .clang-format / CPPLINT.cfg / .pre-commit-config.yaml
     ├── scripts/                           # 版权头 hook + CANN 风格检查脚本
     └── libascendcxx/
-        ├── 000_set_env.sh ... 004_*.sh    # host / kernel 仿真构建脚本
+        ├── run_host_test.sh / run_kernel_full.sh  # 由脚手架生成（core/scaffold_scripts.py），勿手改
         ├── CMakeLists.txt                 # 顶层（INTERFACE 头文件库 + 测试）
         ├── include/ascend/std/            # 目标头文件（已含 __config / algorithm / max.h）
         └── test/libascendcxx/             # host / device / kernel 测试（CMake 自动扫描）

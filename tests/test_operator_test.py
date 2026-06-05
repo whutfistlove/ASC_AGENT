@@ -48,6 +48,11 @@ def test_prepare_tests_creates_host_and_kernel_scaffold(tmp_path):
     assert Path(res.kernel_test_dir).exists()
     assert Path(res.kernel_test_dir, "run_test.sh").exists()
     assert Path(res.kernel_test_dir, "cmake", "npu_lib.cmake").exists()
+    cmake_text = Path(res.kernel_test_dir, "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "--allow-shlib-undefined" in cmake_text
+    assert "--disable-new-dtags" not in cmake_text
+    assert "-rpath,${ASCEND_CANN_PACKAGE_PATH}/lib64" not in cmake_text
+    assert "ASCEND_CANN_PACKAGE_PATH $ENV{ASCEND_HOME_PATH}" in cmake_text
     assert "ascend::std::max" in Path(res.host_test_file).read_text(encoding="utf-8")
 
 
@@ -215,3 +220,81 @@ def test_kernel_run_test_sh_validates_cannsim_log(tmp_path):
     # 仅当命中独立 golden 的 verify 标记才输出 PASS。
     assert OperatorTestRunner.KERNEL_PASS_MARKER in sh
     assert "verification passed" in sh
+
+
+def test_prepare_tests_refreshes_existing_kernel_run_script(tmp_path):
+    """run_test.sh 是生成脚本；环境片段更新后必须覆盖旧脚本。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+    rel = "libascendcxx/include/ascend/std/__algorithm/max.h"
+
+    res = runner.prepare_tests(rel)
+    run_sh = Path(res.kernel_test_dir, "run_test.sh")
+    run_sh.write_text("#!/bin/bash\n# stale script\n", encoding="utf-8")
+
+    runner.prepare_tests(rel)
+
+    sh = run_sh.read_text(encoding="utf-8")
+    assert "stale script" not in sh
+    assert "core/scaffold_env.py 生成" in sh
+    assert "$ASCEND_HOME_PATH/devlib" in sh
+
+
+def test_prepare_tests_refreshes_existing_kernel_cmakelists(tmp_path):
+    """CMakeLists.txt 也是生成脚手架；链接兼容修复必须覆盖旧文件。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+    rel = "libascendcxx/include/ascend/std/__algorithm/max.h"
+
+    res = runner.prepare_tests(rel)
+    cmake_lists = Path(res.kernel_test_dir, "CMakeLists.txt")
+    cmake_lists.write_text("# stale cmake\n", encoding="utf-8")
+
+    runner.prepare_tests(rel)
+
+    text = cmake_lists.read_text(encoding="utf-8")
+    assert "stale cmake" not in text
+    assert "--allow-shlib-undefined" in text
+
+
+# --------------------------------------------------------------------------- #
+# overwrite 不再用 SMOKE 占位覆盖真实 host 测试（footgun 修复）
+# --------------------------------------------------------------------------- #
+def test_overwrite_preserves_real_host_test(tmp_path):
+    """重生成 kernel（overwrite=True，未传 host_test_code）不得覆盖已存在的真实 host 测试。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+    rel = "libascendcxx/include/ascend/std/__algorithm/foo.h"
+
+    real_host = (
+        '#include "ascend/std/__algorithm/foo.h"\n'
+        "int main() { /* real migrated test */ return 0; }\n"
+    )
+    runner.prepare_tests(rel, host_test_code=real_host)  # 先落一份真实 host 测试
+
+    # 再以 overwrite=True 重生成（典型：只想刷新 kernel），不传 host_test_code
+    res = runner.prepare_tests(rel, overwrite=True)
+    assert Path(res.host_test_file).read_text(encoding="utf-8") == real_host
+
+
+def test_overwrite_refreshes_smoke_placeholder(tmp_path):
+    """现有文件本身是 SMOKE 占位时，overwrite 可刷新（不属于"真实测试"）。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+    rel = "libascendcxx/include/ascend/std/__algorithm/bar.h"
+
+    # 首次创建：未知算子 -> SMOKE 回退占位
+    res1 = runner.prepare_tests(rel)
+    assert "SMOKE-ONLY" in Path(res1.host_test_file).read_text(encoding="utf-8")
+
+    # overwrite 刷新仍是 SMOKE（合法，不属于覆盖真实测试）
+    res2 = runner.prepare_tests(rel, overwrite=True)
+    assert "SMOKE-ONLY" in Path(res2.host_test_file).read_text(encoding="utf-8")
+
+
+def test_first_time_creates_template_without_overwrite(tmp_path):
+    """首次创建（文件不存在）即便 overwrite=False 也应生成模板。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+    res = runner.prepare_tests("libascendcxx/include/ascend/std/__algorithm/baz.h")
+    assert Path(res.host_test_file).exists()

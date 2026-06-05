@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from core.config import Config
+from core import build_env, scaffold_scripts
+from core.failure_triage import classify_failure
 from core.operator_kernel_scaffold import (
     KERNEL_PASS_MARKER,
     KERNEL_SOC_VERSION,
@@ -36,11 +38,20 @@ class OperatorTestResult:
     kernel_passed: bool = False
     host_log_path: str = ""
     kernel_log_path: str = ""
+    # 失败分类：env（环境问题，改代码无用）/ code（模型可修）/ unknown / skipped。
+    host_failure_kind: str = ""
+    kernel_failure_kind: str = ""
+    host_skipped_reason: str = ""
+    kernel_skipped_reason: str = ""
     commands: list[str] = field(default_factory=list)
     error: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def env_blocked(self) -> bool:
+        """是否存在「环境类」失败（应修环境/跳过，而不是回传模型改代码）。"""
+        return "env" in (self.host_failure_kind, self.kernel_failure_kind)
 
 
 class OperatorTestRunner:
@@ -149,6 +160,18 @@ class OperatorTestRunner:
             path.write_bytes(normalized)
 
     @staticmethod
+    def _is_smoke_host_test(path: Path) -> bool:
+        """现有 host 测试是否只是 SMOKE 回退占位（含 SMOKE-ONLY 标记）。
+
+        真实测试（模型迁移版、或内置 max/min 带断言版）不含该标记，因此可据此区分：
+        SMOKE 占位可被安全刷新，真实测试绝不被回退模板覆盖。
+        """
+        try:
+            return "SMOKE-ONLY" in path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+
+    @staticmethod
     def _host_test_code(algo: str, include_path: str) -> str:
         if algo == "max":
             body = (
@@ -202,25 +225,11 @@ class OperatorTestRunner:
     KERNEL_SOC_VERSION = KERNEL_SOC_VERSION
     KERNEL_PASS_MARKER = KERNEL_PASS_MARKER
 
+    # 以下若干 _kernel_* 仅是对 KernelScaffoldBuilder 的薄封装，供 prepare_tests 使用，
+    # 把"脚手架内容"集中由 KernelScaffoldBuilder 负责，本类只管落盘与执行。
     @staticmethod
     def _kernel_io_shape(kernel_spec: dict | None = None) -> tuple[int, int]:
         return KernelScaffoldBuilder.io_shape(kernel_spec)
-
-    @staticmethod
-    def _kernel_arg_decls(gm_inputs: int, gm_outputs: int, typ: str = "GM_ADDR") -> list[str]:
-        return KernelScaffoldBuilder.kernel_arg_decls(gm_inputs, gm_outputs, typ=typ)
-
-    @staticmethod
-    def _host_arg_decls(gm_inputs: int, gm_outputs: int) -> list[str]:
-        return KernelScaffoldBuilder.host_arg_decls(gm_inputs, gm_outputs)
-
-    @staticmethod
-    def _launch_arg_decls(gm_inputs: int, gm_outputs: int) -> list[str]:
-        return KernelScaffoldBuilder.launch_arg_decls(gm_inputs, gm_outputs)
-
-    @staticmethod
-    def _host_launch_args(gm_inputs: int, gm_outputs: int) -> list[str]:
-        return KernelScaffoldBuilder.host_launch_args(gm_inputs, gm_outputs)
 
     @staticmethod
     def _kernel_host_h(algo: str, gm_inputs: int = 2, gm_outputs: int = 1) -> str:
@@ -246,25 +255,30 @@ class OperatorTestRunner:
     ) -> str:
         return KernelScaffoldBuilder.main_cpp(algo, include_path, fast, kernel_spec)
 
-    @staticmethod
-    def _kernel_output_check_block(
-        algo: str,
-        *,
-        output_index: int,
-        gm_inputs: int,
-        single_output: bool,
-    ) -> str:
-        return KernelScaffoldBuilder.output_check_block(
-            algo, output_index=output_index, gm_inputs=gm_inputs, single_output=single_output
-        )
-
     @classmethod
     def _kernel_cmakelists(cls) -> str:
         return KernelScaffoldBuilder.cmakelists()
 
     @classmethod
     def _kernel_run_test_sh(cls, algo: str) -> str:
-        return KernelScaffoldBuilder.run_test_sh(algo)
+        return scaffold_scripts.run_test_sh(algo)
+
+    @classmethod
+    def _host_run_test_sh(cls, algo: str) -> str:
+        return scaffold_scripts.host_run_test_sh(algo)
+
+    @classmethod
+    def _full_project_run_sh(cls, algo: str) -> str:
+        return scaffold_scripts.full_project_run_sh(algo)
+
+    def _write_run_script(self, path: Path, text: str) -> None:
+        """落盘生成的运行脚本：强制 LF + 可执行（与 kernel run_test.sh 同处理）。"""
+        save_text(path, text)
+        self._normalize_sh_to_lf(path)
+        try:
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        except OSError:
+            pass
 
     def _copy_kernel_cmake_template(self, kernel_dir: Path) -> None:
         src = self._kernel_root / "max_example" / "cmake"
@@ -303,17 +317,21 @@ class OperatorTestRunner:
         if host_test_code and host_test_code.strip():
             # 模型迁移的 host 测试：直接写入（最新产物，覆盖旧文件）。
             save_text(host_file, host_test_code if host_test_code.endswith("\n") else host_test_code + "\n")
-        else:
-            self._write_if_needed(
-                host_file,
-                self._host_test_code(result.algo_name, result.include_path),
-                overwrite=overwrite,
-            )
+        elif not host_file.exists():
+            # 首次创建：写内置/回退模板。
+            save_text(host_file, self._host_test_code(result.algo_name, result.include_path))
+        elif overwrite and self._is_smoke_host_test(host_file):
+            # 现有文件本身就是 SMOKE 回退占位，overwrite 时可安全刷新。
+            save_text(host_file, self._host_test_code(result.algo_name, result.include_path))
+        # 否则保留现有的真实 host 测试：绝不用 SMOKE 占位覆盖已迁移/已手写的真实测试，
+        # 即便 overwrite=True（修复"重生成 kernel 时误覆盖 host 测试"的 footgun）。
         result.host_prepared = True
         result.host_test_file = str(host_file)
 
         self._copy_kernel_cmake_template(kernel_dir)
-        self._write_if_needed(kernel_dir / "CMakeLists.txt", self._kernel_cmakelists(), overwrite=overwrite)
+        # CMakeLists.txt is generated fixed scaffolding; refresh it so CANN linker
+        # compatibility fixes take effect in existing *_example directories.
+        save_text(kernel_dir / "CMakeLists.txt", self._kernel_cmakelists())
         fast = self._fast_kernel
         tag = self._kernel_workload(fast)["tag"]
         spec = kernel_spec if (kernel_spec and kernel_spec.get("element_op_code")) else None
@@ -353,15 +371,9 @@ class OperatorTestRunner:
                 tag=tag,
             )
         run_sh = kernel_dir / "run_test.sh"
-        self._write_if_needed(run_sh, self._kernel_run_test_sh(result.algo_name), overwrite=overwrite)
-        # 无条件规整为 LF：哪怕脚本是旧的 CRLF 文件且本次未重写，也要修好，
-        # 否则 bash 下 `set -e` 失效会导致假阳性（见 outputs/kernel_test_*.log）。
-        self._normalize_sh_to_lf(run_sh)
-        try:
-            current_mode = run_sh.stat().st_mode
-            run_sh.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        except OSError:
-            pass
+        # run_test.sh 是生成脚本，必须随统一环境片段刷新。否则工作区已有旧脚本时，
+        # 源码里的环境修复不会生效，仍会跳过 set_env.sh 并缺 libascend_hal/devlib。
+        self._write_run_script(run_sh, self._kernel_run_test_sh(result.algo_name))
 
         result.kernel_prepared = True
         result.kernel_test_dir = str(kernel_dir)
@@ -458,34 +470,70 @@ class OperatorTestRunner:
             return False
         return not any(sig in text for sig in cls._KERNEL_FAILURE_SIGNATURES)
 
+    @staticmethod
+    def _read_log(log_path: str | None) -> str:
+        if not log_path:
+            return ""
+        try:
+            return Path(log_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     def run_host_test(self, result: OperatorTestResult) -> None:
-        pattern = "host\\." + result.algo_name + "$"
-        cmd = (
-            "set -e\n"
-            "source ./000_set_env.sh\n"
-            "bash ./001_setup_build.sh\n"
-            "cd ./build\n"
-            f"make {shlex.quote(result.algo_name + '_host_test')}\n"
-            f"ctest -R {shlex.quote(pattern)} -V\n"
-        )
+        # 执行前主动清理过期的 CMake 缓存（项目改名/移动后的旧缓存会让 cmake 报错）。
+        if not self.dry_run and build_env.remove_stale_cmake_cache(self._libascendcxx / "build"):
+            self._log(f"[test] 已清理过期 CMake 缓存: {self._libascendcxx / 'build'}")
+        # 生成统一的 host 运行脚本（取代签入的 000/001），保证 host 与 kernel 同源。
+        script = self._libascendcxx / "run_host_test.sh"
+        self._write_run_script(script, self._host_run_test_sh(result.algo_name))
+        cmd = "bash ./run_host_test.sh\n"
         passed, log = self._exec_and_log(
             result,
             cmd=cmd,
             cwd=self._libascendcxx,
             log_path=self._outputs / f"host_test_{result.algo_name}.log",
             timeout=self._host_timeout,
+            env_extra=self._kernel_env_extra(),
         )
         result.host_ran = not self.dry_run
         result.host_passed = passed
         result.host_log_path = log
+        if not passed and not self.dry_run:
+            triage = classify_failure(self._read_log(log))
+            result.host_failure_kind = triage.kind
+            if triage.is_env:
+                self._log(f"[test] host 失败判定为环境问题（{triage.reason}），不进模型修复循环。")
 
     def _kernel_env_extra(self) -> dict | None:
-        """把 kernel 逐元素打印条数透传给 main.cpp（环境变量 KERNEL_PRINT_SAMPLES）。"""
-        if self._kernel_print_samples is None:
-            return None
-        return {"KERNEL_PRINT_SAMPLES": str(int(self._kernel_print_samples))}
+        """组装 kernel 运行所需的额外环境变量。
+
+        - KERNEL_PRINT_SAMPLES：把逐元素打印条数透传给 main.cpp；
+        - PATH：若 llvm-objdump 不在 PATH，补上 CANN 的 ccec_compiler/bin，
+          否则 kernel 构建的 extract_host_stub.py 会报 FileNotFoundError。
+        """
+        env: dict = {}
+        if self._kernel_print_samples is not None:
+            env["KERNEL_PRINT_SAMPLES"] = str(int(self._kernel_print_samples))
+        additions = build_env.cann_path_additions()
+        if additions:
+            env["PATH"] = os.pathsep.join(additions) + os.pathsep + os.environ.get("PATH", "")
+        return env or None
 
     def run_kernel_test(self, result: OperatorTestResult, kernel_mode: str = "run_test") -> None:
+        # 预检：cannsim 不可用时 kernel 仿真无从谈起，标 SKIPPED 而非 FAIL
+        # （否则会被当成代码失败，徒劳地回传模型）。llvm-objdump 缺失由 _kernel_env_extra
+        # 自动补 PATH，这里不再拦。
+        if not self.dry_run:
+            missing = build_env.missing_kernel_tools()
+            if missing:
+                reason = f"缺少 kernel 仿真所需工具: {', '.join(missing)}（请安装/启用 CANN 模拟器）"
+                self._log(f"[test] 跳过 kernel 测试：{reason}")
+                result.kernel_ran = False
+                result.kernel_passed = False
+                result.kernel_skipped_reason = reason
+                result.kernel_failure_kind = "skipped"
+                return
+
         env_extra = self._kernel_env_extra()
         if kernel_mode == "run_test":
             kernel_dir = self._kernel_root / f"{result.algo_name}_example"
@@ -505,14 +553,13 @@ class OperatorTestRunner:
             if not self.dry_run:
                 passed = self._kernel_run_test_passed(passed, log)
         elif kernel_mode == "full_project":
-            pattern = "kernel\\." + result.algo_name + "\\.sim$"
-            cmd = (
-                "set -e\n"
-                "source ./000_set_env.sh\n"
-                "bash ./004_build_cmake_test_host_cannsim.sh\n"
-                "cd ./build\n"
-                f"ctest -R {shlex.quote(pattern)} -V\n"
-            )
+            # full_project 走 libascendcxx/build；同样先清掉过期 CMake 缓存。
+            if not self.dry_run and build_env.remove_stale_cmake_cache(self._libascendcxx / "build"):
+                self._log(f"[test] 已清理过期 CMake 缓存: {self._libascendcxx / 'build'}")
+            # 生成统一的 full_project 运行脚本（取代签入的 000/004）。
+            script = self._libascendcxx / "run_kernel_full.sh"
+            self._write_run_script(script, self._full_project_run_sh(result.algo_name))
+            cmd = "bash ./run_kernel_full.sh\n"
             passed, log = self._exec_and_log(
                 result,
                 cmd=cmd,
@@ -527,6 +574,11 @@ class OperatorTestRunner:
         result.kernel_ran = not self.dry_run
         result.kernel_passed = passed
         result.kernel_log_path = log
+        if not passed and not self.dry_run:
+            triage = classify_failure(self._read_log(log))
+            result.kernel_failure_kind = triage.kind
+            if triage.is_env:
+                self._log(f"[test] kernel 失败判定为环境问题（{triage.reason}），不进模型修复循环。")
 
     def prepare_and_run(
         self,

@@ -151,7 +151,7 @@ class Pipeline:
         request_text = self._build_initial_request(input_path, source_text, module_hint, target_relpath, guard)
         save_text(out / "model_request.md", request_text)
 
-        prompt = cfg.skill_path("rewrite_initial.md").read_text(encoding="utf-8")
+        prompt = cfg.read_skill("rewrite_initial.md")
         self._log("开始调用模型进行初始改写...")
         raw = call_model_with_io(
             self.model, stage="初始改写", system_prompt=prompt,

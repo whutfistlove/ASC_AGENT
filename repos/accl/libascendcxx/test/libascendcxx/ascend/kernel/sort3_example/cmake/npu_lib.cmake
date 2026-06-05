@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # *****************************************************************************
 # Copyright (c) 2026 Xiong Shengwu Group at Wuhan University of Technology. All Rights Reserved.
 # Author: Lu Xiongbo <luxiongbo@whut.edu.cn>
@@ -18,20 +16,12 @@
 # limitations under the License.
 # *****************************************************************************
 
-set -e  # 遇到错误立即退出
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR/build"
-
-# 进入 build 目录
-cd "$BUILD_DIR"
-
-# 只构建 max_host_test（避免 device 测试干扰）
-echo "🔧 Building max_host_test..."
-make max_host_test
-
-# 只运行 host 相关测试（忽略 device）
-echo "🧪 Running host tests..."
-ctest -R host -V
-
-echo "✅ Host test completed."
+if(EXISTS ${ASCEND_CANN_PACKAGE_PATH}/compiler/tikcpp/ascendc_kernel_cmake)
+    set(ASCENDC_CMAKE_DIR ${ASCEND_CANN_PACKAGE_PATH}/compiler/tikcpp/ascendc_kernel_cmake)
+elseif(EXISTS ${ASCEND_CANN_PACKAGE_PATH}/tools/tikcpp/ascendc_kernel_cmake)
+    set(ASCENDC_CMAKE_DIR ${ASCEND_CANN_PACKAGE_PATH}/tools/tikcpp/ascendc_kernel_cmake)
+else()
+    message(FATAL_ERROR "ascendc_kernel_cmake does not exist ,please check whether the cann package is installed")
+endif()
+include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)
+ascendc_library(ascendc_kernels_${RUN_MODE} SHARED ${KERNEL_FILES})

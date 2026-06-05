@@ -7,8 +7,8 @@ command execution.
 
 from __future__ import annotations
 
-
 KERNEL_SOC_VERSION = "Ascend950PR_9599"
+KERNEL_CANNSIM_SOC_VERSION = "Ascend950"
 KERNEL_PASS_MARKER = "KERNEL_SIM_RESULT: PASS"
 # main.cpp 在「独立 golden 全部命中」时打印的标记。run_test.sh 只在 cannsim.log
 # 里看到这一行才认定语义通过 —— 这样数值算错(打印 Mismatch / 无此标记)就不会被
@@ -477,6 +477,9 @@ class KernelScaffoldBuilder:
             "target_compile_options(ascendc_kernels_bbit PRIVATE\n"
             "    -O2 -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0 -Wall -Werror\n"
             ")\n"
+            "target_link_options(ascendc_kernels_bbit PRIVATE\n"
+            "    -Wl,--allow-shlib-undefined\n"
+            ")\n"
             "target_link_libraries(ascendc_kernels_bbit PRIVATE\n"
             "    host_intf_pub\n"
             "    ascendc_kernels_npu\n"
@@ -488,64 +491,5 @@ class KernelScaffoldBuilder:
             ")\n"
         )
 
-    @classmethod
-    def run_test_sh(cls, algo: str) -> str:
-        return (
-            "#!/bin/bash\n"
-            f"# Kernel simulation test for {algo}.\n\n"
-            'if [ -z "$ASCEND_HOME_PATH" ]; then\n'
-            '    if [ -f "/usr/local/Ascend/cann/set_env.sh" ]; then\n'
-            "        source /usr/local/Ascend/cann/set_env.sh\n"
-            '    elif [ -f "/usr/local/Ascend/ascend-toolkit/set_env.sh" ]; then\n'
-            "        source /usr/local/Ascend/ascend-toolkit/set_env.sh\n"
-            "    fi\n"
-            "fi\n"
-            'if [ -d "/usr/local/Ascend/cann/x86_64-linux/lib64" ]; then\n'
-            '    export LD_LIBRARY_PATH="/usr/local/Ascend/cann/x86_64-linux/lib64:$LD_LIBRARY_PATH"\n'
-            "fi\n\n"
-            "set -e  # Exit on any error\n\n"
-            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
-            'PROJECT_ROOT="$SCRIPT_DIR/../../../../.."\n'
-            'SRC_INCLUDE_DIR="$PROJECT_ROOT/include/ascend"\n'
-            'DST_KERNEL_SYMLINK="$SCRIPT_DIR/ascend"\n\n'
-            'if [ ! -d "$SRC_INCLUDE_DIR" ]; then\n'
-            '    echo "ERROR: source header dir not found: $SRC_INCLUDE_DIR"\n'
-            "    exit 1\n"
-            "fi\n\n"
-            'ln -sfn "$SRC_INCLUDE_DIR" "$DST_KERNEL_SYMLINK"\n'
-            'rm -rf "$SCRIPT_DIR/build"\n'
-            'mkdir -p "$SCRIPT_DIR/build"\n'
-            'cd "$SCRIPT_DIR/build"\n'
-            'export CPLUS_INCLUDE_PATH="$SCRIPT_DIR:$CPLUS_INCLUDE_PATH"\n\n'
-            'cmake .. || { echo "ERROR: CMake configure failed"; rm -f "$DST_KERNEL_SYMLINK"; exit 1; }\n'
-            'make -j"$(nproc)" || { echo "ERROR: build failed"; rm -f "$DST_KERNEL_SYMLINK"; exit 1; }\n\n'
-            'rm -f "$DST_KERNEL_SYMLINK"\n'
-            'export LD_LIBRARY_PATH="$PWD/lib:$LD_LIBRARY_PATH"\n\n'
-            "if ! command -v cannsim &> /dev/null; then\n"
-            '    echo "ERROR: cannsim command not found. Please install/enable the CANN simulator."\n'
-            "    exit 1\n"
-            "fi\n\n"
-            "cannsim record ./ascendc_kernels_bbit -s Ascend950 --gen-report \\\n"
-            '    || { echo "ERROR: cannsim simulation failed"; exit 1; }\n\n'
-            f'echo "kernel simulation for {algo} finished."\n\n'
-            "# cannsim 把被测程序的 stdout 重定向到 build/cannsim_*/cannsim.log。\n"
-            "# 因此「通过」必须基于程序真实的数值校验(独立 golden 全中)，而不是\n"
-            "# cannsim 录制成功本身 —— 否则数值算错也会被掩盖成假绿(见问题①)。\n"
-            'SIM_LOG="$(ls -t "$SCRIPT_DIR"/build/cannsim_*/cannsim.log 2>/dev/null | head -1)"\n'
-            'if [ -z "$SIM_LOG" ] || [ ! -f "$SIM_LOG" ]; then\n'
-            '    echo "ERROR: cannsim.log not found; cannot confirm numeric verification"\n'
-            "    exit 1\n"
-            "fi\n"
-            'if grep -qF "Mismatch at" "$SIM_LOG"; then\n'
-            '    echo "ERROR: kernel numeric mismatch detected in $SIM_LOG"\n'
-            "    exit 1\n"
-            "fi\n"
-            f'if grep -qF "{KERNEL_VERIFY_MARKER}" "$SIM_LOG"; then\n'
-            f'    echo "{KERNEL_PASS_MARKER}"\n'
-            f'elif grep -qF "{KERNEL_SMOKE_MARKER}" "$SIM_LOG"; then\n'
-            '    echo "KERNEL_SIM_RESULT: SMOKE (no kernel_spec; semantic golden check skipped)"\n'
-            "else\n"
-            '    echo "ERROR: kernel verification marker not found in $SIM_LOG"\n'
-            "    exit 1\n"
-            "fi\n"
-        )
+    # shell 脚本生成已拆分到 core/scaffold_scripts.py（run_test_sh / host_run_test_sh /
+    # full_project_run_sh），本类专注 AscendC/ACL 的 C++ 源与 CMake 生成。

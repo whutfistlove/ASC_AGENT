@@ -15,7 +15,7 @@ from core.model_client import (
     normalize_generated_text,
 )
 from core.test_migrator import validate_host_test_code, validate_kernel_spec
-from core.utils import save_text, call_model_with_io
+from core.utils import save_text, call_model_with_io, call_model_maybe_tools
 
 
 def build_fix_request(target_relpath: str, expected_header_guard: str,
@@ -60,7 +60,7 @@ def run_single_fix_from_log(
     expected_header_guard: str,
     round_index: int,
     commit_log_filename: str,
-    prompt_filename: str = "rewrite_fix_from_log.md",
+    prompt_filename: str = "rewrite_fix_from_log_and_test.md",
     test_feedback_text: str = "",
     verbose: bool = True,
     show_model_io: bool = False,
@@ -89,7 +89,7 @@ def run_single_fix_from_log(
 
     save_text(fix_request_path, fix_request_text)
 
-    prompt_text = config.skill_path(prompt_filename).read_text(encoding="utf-8")
+    prompt_text = config.read_skill(prompt_filename)
     if verbose:
         print(f"开始调用模型进行第 {round_index} 轮修复...")
     raw = call_model_with_io(
@@ -150,7 +150,7 @@ def run_single_fix_from_test_feedback(
     fix_notes_path = output_dir / "fix_notes_test_feedback.md"
 
     save_text(fix_request_path, fix_request_text)
-    prompt_text = config.skill_path(prompt_filename).read_text(encoding="utf-8")
+    prompt_text = config.read_skill(prompt_filename)
     if verbose:
         print("开始调用模型基于测试反馈生成修复稿...")
     raw = call_model_with_io(
@@ -206,7 +206,7 @@ def run_test_feedback_fix(
     )
     save_text(output_dir / f"fix_request_test_round{round_index}.md", fix_request_text)
 
-    prompt_text = config.skill_path(prompt_filename).read_text(encoding="utf-8")
+    prompt_text = config.read_skill(prompt_filename)
     if verbose:
         print(f"开始调用模型基于测试反馈生成第 {round_index} 轮修复...")
     raw = call_model_with_io(
@@ -309,11 +309,15 @@ def run_test_artifact_fix(
     prompt_filename: str = "fix_tests_from_log.md",
     verbose: bool = True,
     show_model_io: bool = False,
+    toolbox=None,
+    max_tool_rounds: int = 4,
 ) -> dict:
     """测试反馈修复（可同时改 header / host 测试 / kernel_spec）。
 
     返回字典，仅包含模型本轮决定改动的件（缺省字段表示该件保持不变）：
         {"header_code"?, "host_test_code"?, "kernel_spec"?, "root_cause", "notes"}
+
+    toolbox 非空且客户端支持时，模型可先调用工具取证/自检再产出修复（P1）。
     """
     output_dir = config.output_dir
     spec_json = (
@@ -331,12 +335,14 @@ def run_test_artifact_fix(
     )
     save_text(output_dir / f"fix_request_test_round{round_index}.md", request_text)
 
-    prompt_text = config.skill_path(prompt_filename).read_text(encoding="utf-8")
+    prompt_text = config.read_skill(prompt_filename)
     if verbose:
-        print(f"开始调用模型基于测试反馈生成第 {round_index} 轮修复（header/测试）...")
-    raw = call_model_with_io(
+        tool_hint = "（带工具取证）" if toolbox is not None else ""
+        print(f"开始调用模型基于测试反馈生成第 {round_index} 轮修复（header/测试）{tool_hint}...")
+    raw = call_model_maybe_tools(
         model_client, stage=f"测试反馈修复 第 {round_index} 轮",
         system_prompt=prompt_text, user_content=request_text, show_io=show_model_io,
+        toolbox=toolbox, max_tool_rounds=max_tool_rounds,
     )
     save_text(output_dir / f"fix_model_raw_test_round{round_index}.md", raw)
 

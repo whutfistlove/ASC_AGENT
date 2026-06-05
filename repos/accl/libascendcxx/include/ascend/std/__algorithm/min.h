@@ -9,6 +9,7 @@
 
 _ASCEND_STD_BEGIN
 
+// Primary template using std::less
 template <typename _Tp>
 _ASCEND_AICORE_FN constexpr const _Tp& min(const _Tp& __a, const _Tp& __b) {
     return (__b < __a) ? __b : __a;

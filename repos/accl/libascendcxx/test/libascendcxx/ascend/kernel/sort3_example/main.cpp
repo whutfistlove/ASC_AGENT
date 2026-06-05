@@ -1,0 +1,159 @@
+// auto-workload=full (n=16384, cores=8, inputs=3, outputs=3, dtype=int32_t)
+#include "acl/acl.h"
+#include "host.h"
+#include "ascend/std/__algorithm/sort3.h"
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <vector>
+
+#define CHECK_ACL(call)                                                                   \
+    do {                                                                                  \
+        aclError err = call;                                                              \
+        if (err != ACL_SUCCESS) {                                                         \
+            std::cerr << "ACL error: " << err << " at " << __FILE__ << ":" << __LINE__ \
+                      << std::endl;                                                       \
+            return 1;                                                                      \
+        }                                                                                  \
+    } while (0)
+
+int main()
+{
+    const size_t n = 16384;
+    const size_t bytes = n * sizeof(int32_t);
+
+    CHECK_ACL(aclInit(nullptr));
+    CHECK_ACL(aclrtSetDevice(0));
+
+    void* stream = nullptr;
+    CHECK_ACL(aclrtCreateStream(&stream));
+
+    std::vector<int32_t> h_in0(n);
+    std::vector<int32_t> h_in1(n);
+    std::vector<int32_t> h_in2(n);
+    std::vector<int32_t> h_out0(n);
+    std::vector<int32_t> h_out1(n);
+    std::vector<int32_t> h_out2(n);
+    auto& h_x = h_in0;
+    auto& h_y = h_in1;
+    (void)h_x;
+    (void)h_y;
+    for (size_t i = 0; i < n; ++i) {
+        { h_in0[i] = (i * 3) % 11 - 5; h_in1[i] = (i * 7 + 2) % 13 - 6; h_in2[i] = (i * 11 + 5) % 17 - 8; }
+    }
+
+    void* d_in0 = nullptr;
+    void* d_in1 = nullptr;
+    void* d_in2 = nullptr;
+    void* d_out0 = nullptr;
+    void* d_out1 = nullptr;
+    void* d_out2 = nullptr;
+    CHECK_ACL(aclrtMalloc(&d_in0, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc(&d_in1, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc(&d_in2, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc(&d_out0, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc(&d_out1, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc(&d_out2, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+
+    CHECK_ACL(aclrtMemcpy(d_in0, bytes, h_in0.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(d_in1, bytes, h_in1.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(d_in2, bytes, h_in2.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
+
+    ascend_std_sort3_do(8, stream, static_cast<uint8_t*>(d_in0), static_cast<uint8_t*>(d_in1), static_cast<uint8_t*>(d_in2), static_cast<uint8_t*>(d_out0), static_cast<uint8_t*>(d_out1), static_cast<uint8_t*>(d_out2));
+    CHECK_ACL(aclrtSynchronizeStream(stream));
+    CHECK_ACL(aclrtMemcpy(h_out0.data(), bytes, d_out0, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(h_out1.data(), bytes, d_out1, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(h_out2.data(), bytes, d_out2, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
+
+    long print_samples = 8;
+    if (const char* __ps = std::getenv("KERNEL_PRINT_SAMPLES")) {
+        if (*__ps) print_samples = std::atol(__ps);
+    }
+    size_t mismatches = 0;
+    for (size_t i = 0; i < n; ++i) {
+        int32_t in0_ref = h_in0[i];
+        int32_t in1_ref = h_in1[i];
+        int32_t in2_ref = h_in2[i];
+        int32_t x_ref = in0_ref;
+        int32_t y_ref = in1_ref;
+        (void)x_ref;
+        (void)y_ref;
+        (void)in0_ref;
+        (void)in1_ref;
+        (void)in2_ref;
+        int32_t expected0 = (int32_t)0;
+        int32_t expected1 = (int32_t)0;
+        int32_t expected2 = (int32_t)0;
+        int32_t& expected = expected0;
+        (void)expected;
+        (void)expected0;
+        (void)expected1;
+        (void)expected2;
+        { float lo = in0_ref; if (in1_ref < lo) lo = in1_ref; if (in2_ref < lo) lo = in2_ref; float hi = in0_ref; if (in1_ref > hi) hi = in1_ref; if (in2_ref > hi) hi = in2_ref; expected0 = lo; expected2 = hi; expected1 = in0_ref + in1_ref + in2_ref - lo - hi; }
+        int32_t got0 = h_out0[i];
+        if (print_samples < 0 || static_cast<long>(i) < print_samples) {
+            std::cout << "[kernel][sort3][" << i << "][out0]" << " in0=" << in0_ref << " in1=" << in1_ref << " in2=" << in2_ref
+                      << " got=" << got0 << " expected=" << expected0 << std::endl;
+        }
+        if (got0 != expected0) {
+            ++mismatches;
+            if (mismatches <= 8) {
+                std::cerr << "Mismatch at i=" << i << ", out0, got=" << got0
+                          << ", expected=" << expected0 << std::endl;
+            }
+        }
+
+        int32_t got1 = h_out1[i];
+        if (print_samples < 0 || static_cast<long>(i) < print_samples) {
+            std::cout << "[kernel][sort3][" << i << "][out1]" << " in0=" << in0_ref << " in1=" << in1_ref << " in2=" << in2_ref
+                      << " got=" << got1 << " expected=" << expected1 << std::endl;
+        }
+        if (got1 != expected1) {
+            ++mismatches;
+            if (mismatches <= 8) {
+                std::cerr << "Mismatch at i=" << i << ", out1, got=" << got1
+                          << ", expected=" << expected1 << std::endl;
+            }
+        }
+
+        int32_t got2 = h_out2[i];
+        if (print_samples < 0 || static_cast<long>(i) < print_samples) {
+            std::cout << "[kernel][sort3][" << i << "][out2]" << " in0=" << in0_ref << " in1=" << in1_ref << " in2=" << in2_ref
+                      << " got=" << got2 << " expected=" << expected2 << std::endl;
+        }
+        if (got2 != expected2) {
+            ++mismatches;
+            if (mismatches <= 8) {
+                std::cerr << "Mismatch at i=" << i << ", out2, got=" << got2
+                          << ", expected=" << expected2 << std::endl;
+            }
+        }
+    }
+    std::cout << "[kernel][sort3] checked " << n << " elements, mismatches "
+              << mismatches << std::endl;
+    if (mismatches != 0) {
+        aclrtFree(d_in0);
+        aclrtFree(d_in1);
+        aclrtFree(d_in2);
+        aclrtFree(d_out0);
+        aclrtFree(d_out1);
+        aclrtFree(d_out2);
+        aclrtDestroyStream(stream);
+        aclrtResetDevice(0);
+        aclFinalize();
+        return 2;
+    }
+
+    aclrtFree(d_in0);
+    aclrtFree(d_in1);
+    aclrtFree(d_in2);
+    aclrtFree(d_out0);
+    aclrtFree(d_out1);
+    aclrtFree(d_out2);
+    aclrtDestroyStream(stream);
+    aclrtResetDevice(0);
+    aclFinalize();
+
+    std::cout << "kernel simulation verification passed." << std::endl;
+    return 0;
+}

@@ -57,3 +57,39 @@ def call_model_with_io(model, *, stage: str, system_prompt: str, user_content: s
         print(raw)  # 非流式 / mock：一次性打印
     print(f"{sep}\n")
     return raw
+
+
+def call_model_maybe_tools(model, *, stage: str, system_prompt: str, user_content: str,
+                           show_io: bool, toolbox=None, max_tool_rounds: int = 4) -> str:
+    """有 toolbox 且客户端支持时走「带工具」对话，否则回退到单轮 generate。
+
+    toolbox 提供 schemas() 与 dispatch(name, args)；这样客户端与具体工具实现解耦，
+    便于离线 mock 测试整条带工具的修复链路。
+    """
+    if toolbox is None or not hasattr(model, "generate_with_tools"):
+        return call_model_with_io(
+            model, stage=stage, system_prompt=system_prompt, user_content=user_content, show_io=show_io
+        )
+
+    on_delta = None
+    if show_io:
+        sep = "=" * 72
+        print(f"\n{sep}\n[模型交互·带工具] {stage} —— system\n{sep}\n{system_prompt}")
+        print(f"\n{sep}\n[模型交互·带工具] {stage} —— user\n{sep}\n{user_content}")
+        print(f"\n{sep}\n[模型交互·带工具] {stage} —— 调查/响应\n{sep}")
+
+        def on_delta(text: str) -> None:  # noqa: E306
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+    raw = model.generate_with_tools(
+        system_prompt=system_prompt,
+        user_content=user_content,
+        tool_schemas=toolbox.schemas(),
+        dispatch=toolbox.dispatch,
+        max_tool_rounds=max_tool_rounds,
+        on_delta=on_delta,
+    )
+    if show_io:
+        print(f"\n{'=' * 72}\n")
+    return raw

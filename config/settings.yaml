@@ -36,6 +36,11 @@ model:
   thinking: false          # 置 true 时请求体加 {"thinking": {"type": "enabled"}}
   response_format_json: true
   stream: true             # 流式调用；配合 --show-model-io 可实时逐字回显
+  # P1：测试反馈修复时是否允许模型调用取证/自检工具（read_repo_file / grep_repo /
+  # host_syntax_check / extract_error_lines）。默认关闭以保持既有行为；置 true 后
+  # 模型可先调查再产出修复，单次成功率更高。max_tool_rounds 限制每次最多工具轮数。
+  tools_enabled: false
+  max_tool_rounds: 4
 
 repo_verify:
   # 留空则自动探测 conda.sh；也可显式写绝对路径

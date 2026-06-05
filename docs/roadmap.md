@@ -3,6 +3,18 @@
 本文件记录已识别、但**尚未实现**的方向，供后续迭代。已落地的修复见 `README.md` /
 `docs/guide.md` 与对应单测。
 
+## 近期已落地（摘要）
+
+- **止血**：失败分类 env/code（`core/failure_triage.py`）+ 环境自愈（`core/build_env.py`）+
+  修复循环去重/早停 + 缺 `cannsim` 标 SKIPPED——环境问题不再空烧模型调用。
+- **模型工具**（默认关闭）：`core/agent_tools.py` 让修复模型可读 sibling 头 / grep 符号 /
+  `g++ -fsyntax-only` 自检 / 抽日志 error 行；工具循环见 `model_client.generate_with_tools`。
+- **提示词单一事实源**：`skills/_shared/` 片段 + `{{include:}}`；合并两个 rewrite_fix。
+- **脚手架统一化**：host/kernel/full 运行脚本由 `core/scaffold_scripts.py` 生成、共用
+  `core/scaffold_env.py` 环境片段；删除签入的 `000`–`004` 脚本。
+- **合成复杂算子**：`sort3`（3 输入 / 3 输出、分支排序网络、整数精确）入源仓与批量清单，
+  用于压测迁移管线的多 IO / dtype / 独立 golden。
+
 ---
 
 ## R1. 传递依赖迁移（单文件迁移 → 依赖闭包迁移）
@@ -48,6 +60,8 @@ minmax.h:10:10: fatal error: 'ascend/std/__utility/pair.h' file not found
    - 在跑 kernel 测试前，做一次**纯头自包含编译**（`g++ -fsyntax-only -I include`），
      提前抓出“缺依赖/路径不一致”，而不是等到 cannsim 阶段才暴露。
    - kernel 符号链接子集应覆盖依赖闭包涉及的所有子目录。
+   - 注：`core/agent_tools.py` 的 `host_syntax_check` 已提供“`g++ -fsyntax-only` 自检”这一
+     building block，可作为该校验的复用基础（当前仅供模型在修复时按需调用）。
 4. **失败闭环接入**
    - 若某依赖迁移后仍编不过，把缺失 include 的报错回传模型（复用 `fix_once` 的反馈修复），
      或在 `notes` 中标注“需要先迁移 X”。

@@ -1,4 +1,3 @@
-// ACCL-side host test for min, migrated from the CCCL min test.
 #include "ascend/std/__algorithm/min.h"
 #include <iostream>
 
@@ -20,9 +19,23 @@ int main()
     expect_eq("min(5.0f, 3.0f)", ascend::std::min(5.0f, 3.0f), 3.0f);
     expect_eq("min(-4, -9)", ascend::std::min(-4, -9), -9);
 
-    auto comp = [](int a, int b) { return a < b; };
-    expect_eq("min(10, 20, comp)", ascend::std::min(10, 20, comp), 10);
-    expect_eq("min(20, 10, comp)", ascend::std::min(20, 10, comp), 10);
+    // Equal values: the first argument is returned (by reference).
+    {
+        int a = 7;
+        int b = 7;
+        expect_eq("min(a=7, b=7)", ascend::std::min(a, b), 7);
+        // Also check reference equality as in CCCL test
+        bool ref_ok = (&ascend::std::min(a, b) == &a);
+        std::cout << "[host][min] &min(a,b) == &a = " << ref_ok << " (expected 1) " << (ref_ok ? "OK" : "FAIL") << std::endl;
+        if (!ref_ok) ++g_failures;
+    }
+
+    // Custom comparator
+    {
+        auto comp = [](int x, int y) { return x < y; };
+        expect_eq("min(10, 20, comp)", ascend::std::min(10, 20, comp), 10);
+        expect_eq("min(20, 10, comp)", ascend::std::min(20, 10, comp), 10);
+    }
 
     return g_failures == 0 ? 0 : 1;
 }

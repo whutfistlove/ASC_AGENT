@@ -386,6 +386,15 @@ class Config:
         return bool(self.raw["model"].get("stream", True))
 
     @property
+    def model_tools_enabled(self) -> bool:
+        """是否允许修复模型调用取证/自检工具（read_repo_file/grep_repo/...）。默认关闭。"""
+        return bool(self.raw["model"].get("tools_enabled", False))
+
+    @property
+    def model_max_tool_rounds(self) -> int:
+        return int(self.raw["model"].get("max_tool_rounds", 4))
+
+    @property
     def repo_verify(self) -> dict:
         return self.raw["repo_verify"]
 
@@ -399,6 +408,33 @@ class Config:
 
     def skill_path(self, name: str) -> Path:
         return self.project_root / "skills" / name
+
+    def read_skill(self, name: str) -> str:
+        """读取 skill 提示词，并展开 ``{{include: _shared/xxx.md}}`` 片段引用。
+
+        把各 fix/migrate 提示词里重复抄写的铁律（算子语义为基准、kernel_spec 槽位契约、
+        host 测试必返回非零）收敛到 skills/_shared/ 单一事实源，避免多份漂移。
+        """
+        return self._expand_skill_includes(self.skill_path(name), set())
+
+    def _expand_skill_includes(self, path: Path, seen: set) -> str:
+        resolved = path.resolve()
+        if resolved in seen:
+            raise ValueError(f"skill include 循环引用: {path}")
+        seen = seen | {resolved}
+        text = path.read_text(encoding="utf-8")
+
+        def repl(match: "re.Match") -> str:
+            inc_name = match.group(1).strip()
+            inc_path = self.project_root / "skills" / inc_name
+            return self._expand_skill_includes(inc_path, seen).rstrip("\n")
+
+        return re.sub(
+            r"^\{\{\s*include:\s*(.+?)\s*\}\}[ \t]*$",
+            repl,
+            text,
+            flags=re.MULTILINE,
+        )
 
     def example_paths(self) -> dict:
         return self.raw["examples"]
