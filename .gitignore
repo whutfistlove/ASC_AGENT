@@ -12,6 +12,7 @@ outputs/*
 # 本地 IDE / 工具设置（不进公共仓库）
 .claude/
 .vscode/
+.codex/
 
 # CMake / 编译产物 + cannsim 报告（host/kernel 测试生成，不纳入仓库）
 build/

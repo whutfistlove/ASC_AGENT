@@ -7,6 +7,8 @@ Last updated: 2026-06-06
 - Use `ASC_AGENT` as the main project for future development.
 - Use `develop_jzy` as the long-lived personal branch.
 - Keep `/home/zhenyu/projects/cccl` read-only.
+- Treat `ASC_AGENT/repos/cccl` as an incomplete fixture repository for offline tests only, not as
+  the real CCCL source.
 - Use `ASC_AGENT/repos/accl` as the main target repository during toolchain development.
 - Treat `/home/zhenyu/projects/mylearn` as a reference repository, not the primary development target.
 - Do not continue expanding `cccl-to-accl-v2`; preserve it only as historical context.
@@ -23,6 +25,8 @@ Last updated: 2026-06-06
 ## Tooling Decisions
 
 - Prefer deterministic local scanning and structured indexes over ad hoc prompt-only context.
+- Real CCCL inventory/test indexing should support `CCCL_REPO=/home/zhenyu/projects/cccl` by
+  default and must not populate `ASC_AGENT/repos/cccl` by copying the full upstream repository.
 - Add dependency closure migration before attempting large batches from real CCCL.
 - Keep new Codex sessions productive by reading handoff docs first, not by relying on old chat history.
 - Update `docs/codex_handoff.md` at the end of each meaningful work session.

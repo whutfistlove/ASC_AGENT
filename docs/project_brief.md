@@ -13,9 +13,14 @@ style-clean generated code.
 - `/home/zhenyu/projects/cccl`: read-only upstream CCCL source of truth.
 - `/home/zhenyu/projects/ASC_AGENT`: main development project and migration assistant.
 - `ASC_AGENT/repos/accl`: primary target ACCL repository and experiment target.
-- `ASC_AGENT/repos/cccl`: small fixture source repository for offline tests and examples.
+- `ASC_AGENT/repos/cccl`: incomplete fixture source repository for offline tests and examples only;
+  do not treat it as real upstream coverage.
 - `/home/zhenyu/projects/mylearn`: reference for historical ACCL layout, hooks, and CANN workflow.
 - `cccl-to-accl-v2`: historical prototype; keep useful lessons but do not extend it as the main tool.
+
+Real inventory and test indexing should default to the complete upstream tree selected by
+`CCCL_REPO=/home/zhenyu/projects/cccl`. Do not copy the full CCCL repository into
+`ASC_AGENT/repos/cccl`.
 
 ## Development Branches
 
