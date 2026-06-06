@@ -31,6 +31,22 @@ Last updated: 2026-06-06
 - Keep new Codex sessions productive by reading handoff docs first, not by relying on old chat history.
 - Update `docs/codex_handoff.md` at the end of each meaningful work session.
 
+## Config and Macro Layer Decision
+
+- Keep `_ASCEND_*` as the canonical ACCL target spelling for namespace control and AscendC
+  execution annotations in `ascend/std/__config`, including `_ASCEND_STD_BEGIN`,
+  `_ASCEND_STD_END`, `_ASCEND_AICORE_FN`, `_ASCEND_AIV_FN`, and compiler/platform flags.
+- Provide `_ACCL_*` aliases in `ascend/std/__config` as a compatibility layer, not as a
+  replacement naming scheme. Existing generated headers and examples should not be mechanically
+  rewritten from `_ASCEND_*` to `_ACCL_*`.
+- Use `_ACCL_*` for migrated CCCL support-header surfaces where the upstream macro family is
+  naturally `_CCCL_*`, for example `__cccl/os.h` mapping to `__accl/os.h` with `_ACCL_OS(...)`.
+- Let `_ACCL_STD_NO_EXCEPTIONS` feed `_ASCEND_STD_NO_EXCEPTIONS` when predefined, so callers and
+  future migrated support headers can use either spelling consistently.
+- Defer any broad macro cleanup until foundational dependency headers are migrated and validated;
+  Node 5 should use the existing `_ASCEND_*` canonical macros unless a support header specifically
+  needs an `_ACCL_*` public compatibility macro.
+
 ## Open Decisions
 
 - Exact status format for a future machine-generated migration ledger.

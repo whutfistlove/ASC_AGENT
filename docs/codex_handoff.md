@@ -18,47 +18,45 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 3 work: `dd34e7b feat: add real cccl test index`.
+- Latest checked commit before Node 4 work: `95e341e feat: add cccl include dependency graph`.
 
 ## What Changed This Session
 
-- Completed Node 3 include dependency graph:
-  - Added `core/dep_graph.py` to turn header inventory include data into a deterministic
-    in-tree dependency graph.
-  - Keeps only dependencies that exist under `libcudacxx/include/cuda/std`; missing
-    `cuda/std/...` includes are reported as `unknown_cuda_std_includes` and are not graph edges.
-  - Returns dependency-first/leaf-first ordering for migration planning.
-  - Detects include cycles safely and records them in the report.
-  - Added `main.py dep-graph`, resolving CCCL from `--cccl-repo`, `CCCL_REPO`, then
-    `/home/zhenyu/projects/cccl`, and writing `outputs/cccl_dep_graph.json`.
-  - Added fixture tests in `tests/test_dep_graph.py`, including A -> B -> C ordering and
-    cycle reporting.
-  - Ran a real read-only scan of `/home/zhenyu/projects/cccl`; it found 786 headers,
-    6,889 in-tree dependency edges, 31 unknown `cuda/std/...` includes, and 1 cycle:
-    `__internal/pstl_config.h -> detail/__config -> __internal/pstl_config.h`.
+- Completed Node 4 config and macro layer decision:
+  - Inspected `repos/accl/libascendcxx/include/ascend/std/__config` and current ACCL generated
+    algorithm headers.
+  - Confirmed existing generated target headers and examples use `_ASCEND_STD_BEGIN`,
+    `_ASCEND_STD_END`, and `_ASCEND_AICORE_FN` as their working config surface.
+  - Confirmed `_ACCL_*` currently appears as the migrated form of CCCL support macros, especially
+    the historical `__cccl/os.h -> __accl/os.h` example with `_ACCL_OS(...)`.
+  - Recorded the decision in `docs/decisions.md`: keep `_ASCEND_*` canonical for target namespace
+    and AscendC annotations; provide `_ACCL_*` compatibility aliases; use `_ACCL_*` for migrated
+    CCCL support-header macro families where appropriate.
+  - Added a narrow alias section to `ascend/std/__config`; existing generated headers were not
+    mechanically rewritten.
+  - Added `tests/test_config_macro_policy.py` to compile-check `_ACCL_*` aliases and the
+    `_ACCL_STD_NO_EXCEPTIONS -> _ASCEND_STD_NO_EXCEPTIONS` bridge.
 
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
-- `git status --short`: clean before Node 3 edits.
-- `git log -1 --oneline`: `dd34e7b feat: add real cccl test index`.
-- `conda run -n accl python -m pytest tests/test_dep_graph.py`: passed (`4 passed`).
-- `conda run -n accl python -m pytest tests/test_inventory.py tests/test_test_index.py`:
-  passed (`13 passed`).
-- `conda run -n accl python main.py dep-graph --cccl-repo /home/zhenyu/projects/cccl`:
-  passed; wrote `outputs/cccl_dep_graph.json`.
-- `conda run -n accl python -m pytest`: passed (`173 passed`).
+- `git status --short`: clean before Node 4 edits.
+- `git log -1 --oneline`: `95e341e feat: add cccl include dependency graph`.
+- `conda run -n accl python -m pytest tests/test_config_macro_policy.py`: passed (`1 passed`).
+- `conda run -n accl python -m pytest`: passed (`174 passed`).
 - `conda run -n accl python main.py selftest`: passed.
 
 ## Next Concrete Task
 
-Start Node 4: Config and Macro Layer Decision:
+Start Node 5: Minimal Foundational Dependencies:
 
-1. Evaluate current `_ASCEND_*` macros in `ascend/std/__config`.
-2. Compare with a possible `_ACCL_*` compatibility layer.
-3. Decide whether to keep `_ASCEND_*`, migrate to `_ACCL_*`, or support aliases.
-4. Record the decision in `docs/decisions.md`.
-5. Keep existing headers/tests passing.
+1. Start with `__utility/move.h`, `__utility/forward.h`, and `__utility/pair.h`.
+2. Add only the minimal `__type_traits` pieces required by those utilities and the first
+   algorithms.
+3. Add `__functional/identity.h`, `__functional/operations.h`, and `__algorithm/comp.h` only as
+   needed.
+4. Add focused self-include or host semantic tests.
+5. Make `minmax` depend on a real migrated `pair` instead of its local inline substitute.
 
 ## Files and Directories to Treat Carefully
 
@@ -75,5 +73,7 @@ Start Node 4: Config and Macro Layer Decision:
   `libcudacxx/test/libcudacxx/std`.
 - A single header can have multiple relevant `.pass.cpp` tests.
 - Passing commit/style checks does not prove semantic correctness.
+- For config macros, `_ASCEND_*` is canonical for namespace/device annotations; `_ACCL_*` is a
+  compatibility alias or support-header macro family, not a reason to rewrite existing headers.
 - Missing CANN/cannsim is an environment block, not a code failure.
 - Avoid making generated examples the source of truth until they pass quality gates.
