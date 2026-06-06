@@ -70,12 +70,12 @@ Goal: keep the development environment and AI handoff rules stable.
 
 - Verify `conda run -n accl python main.py selftest`.
 - Verify `conda run -n accl python -m pytest`.
-- Decide whether project defaults should use conda env `accl` instead of
-  `asc_cccl_env`.
+- Project defaults should use conda env `accl`.
 - Keep `.env` ignored and out of commits.
 
 Status: Python development environment has passed selftest and pytest in env
-`accl`; CANN/cannsim and real model calls are not yet verified.
+`accl`; project defaults now use `accl`; CANN/cannsim and real model calls are
+not yet verified.
 
 ### Node 1: Real CCCL Header Inventory
 

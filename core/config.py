@@ -79,7 +79,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "repo_verify": {
         "conda_sh": "",               # 留空则自动探测
-        "conda_env": "asc_cccl_env",
+        "conda_env": "accl",
         "clang_format_bin": "clang-format",   # 不再写死 clang-format-14
         "push_remote": "origin",
         "base_branch": "develop",

@@ -29,21 +29,27 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
   - `docs/decisions.md`
   - `docs/migration_ledger.md`
   - `docs/codex_handoff.md`
+- Added `AGENTS.md` as the project-level AI agent entry point and task-node workflow.
+- Completed Node 0 Python development environment baseline:
+  - Confirmed conda env `accl` works for selftest and pytest.
+  - Updated project defaults from historical `asc_cccl_env` to `accl`.
+  - Synced generated host/kernel run script defaults to `ASC_CONDA_ENV:-accl`.
 
 ## Verification
 
 - `python3 main.py selftest`: passed.
 - `git status --short`: clean before documentation was added to the repository.
+- `conda run -n accl python main.py selftest`: passed.
+- `conda run -n accl python -m pytest`: passed (`156 passed`).
 
 ## Next Concrete Task
 
-Implement real CCCL inventory and test indexing:
+Start Node 1: implement real CCCL header inventory:
 
 1. Add a small module that scans real `libcudacxx/include/cuda/std` headers from
    `CCCL_REPO=/home/zhenyu/projects/cccl` by default.
-2. Add a small module or command that scans real `libcudacxx/test/libcudacxx/std` tests from
-   `CCCL_REPO=/home/zhenyu/projects/cccl` by default.
-3. Connect the scanner to a report in `outputs/` or a CLI subcommand.
+2. Record header relative path, module, public/private shape, and includes.
+3. Produce a deterministic JSON report in `outputs/`.
 4. Add fixture-based unit tests before scanning the full upstream tree.
 
 ## Files and Directories to Treat Carefully

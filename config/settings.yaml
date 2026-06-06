@@ -56,7 +56,7 @@ few_shot:
 repo_verify:
   # 留空则自动探测 conda.sh；也可显式写绝对路径
   conda_sh: "${CONDA_SH:-}"
-  conda_env: asc_cccl_env
+  conda_env: accl
   clang_format_bin: clang-format    # 不再写死 clang-format-14
   push_remote: origin
   base_branch: develop
