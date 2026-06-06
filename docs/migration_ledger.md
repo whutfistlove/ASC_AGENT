@@ -24,7 +24,13 @@ Status values:
 | `__algorithm` | `min.h` | generated | Existing ACCL header and tests in `repos/accl`; needs real upstream test mapping. |
 | `__algorithm` | `swap.h` | generated | Existing sample covers original void/in-place shape. |
 | `__algorithm` | `clamp.h` | generated | Existing sample and kernel spec present. |
-| `__algorithm` | `minmax.h` | blocked_design | Current ACCL sample inlines `pair`; should depend on migrated `__utility/pair.h`. |
+| `__algorithm` | `minmax.h` | host_passed | Now depends on migrated `__utility/pair.h` instead of an inline pair substitute. Local foundational pytest and `host.minmax` passed; real upstream revalidation remains Node 6. |
+| `__utility` | `move.h` | host_passed | Bootstrap ACCL implementation passed focused g++ semantic coverage in `tests/test_foundational_dependencies.py`. |
+| `__utility` | `forward.h` | host_passed | Bootstrap ACCL implementation passed focused g++ semantic coverage in `tests/test_foundational_dependencies.py`. |
+| `__utility` | `pair.h` | host_passed | Bootstrap ACCL implementation passed value, move-only, and reference-pair coverage in `tests/test_foundational_dependencies.py`. |
+| `__functional` | `identity.h` | host_passed | Bootstrap ACCL implementation passed focused g++ semantic coverage in `tests/test_foundational_dependencies.py`. |
+| `__functional` | `operations.h` | host_passed | Bootstrap ACCL implementation passed focused g++ semantic coverage in `tests/test_foundational_dependencies.py`. |
+| `__algorithm` | `comp.h` | host_passed | Bootstrap ACCL comparator helpers passed focused g++ semantic coverage in `tests/test_foundational_dependencies.py`. |
 | `__numeric` | `gcd.h` | pending | Listed in batch manifest; integer dtype tests should be used. |
 | `__numeric` | `lcm.h` | pending | Listed in batch manifest; integer dtype tests should be used. |
 | `__numeric` | `midpoint.h` | pending | Listed in batch manifest; needs overflow-sensitive host tests. |

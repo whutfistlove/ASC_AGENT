@@ -18,45 +18,46 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 4 work: `95e341e feat: add cccl include dependency graph`.
+- Latest checked commit before Node 5 work: `9f8ae71 docs: decide accl config macro layer`.
 
 ## What Changed This Session
 
-- Completed Node 4 config and macro layer decision:
-  - Inspected `repos/accl/libascendcxx/include/ascend/std/__config` and current ACCL generated
-    algorithm headers.
-  - Confirmed existing generated target headers and examples use `_ASCEND_STD_BEGIN`,
-    `_ASCEND_STD_END`, and `_ASCEND_AICORE_FN` as their working config surface.
-  - Confirmed `_ACCL_*` currently appears as the migrated form of CCCL support macros, especially
-    the historical `__cccl/os.h -> __accl/os.h` example with `_ACCL_OS(...)`.
-  - Recorded the decision in `docs/decisions.md`: keep `_ASCEND_*` canonical for target namespace
-    and AscendC annotations; provide `_ACCL_*` compatibility aliases; use `_ACCL_*` for migrated
-    CCCL support-header macro families where appropriate.
-  - Added a narrow alias section to `ascend/std/__config`; existing generated headers were not
-    mechanically rewritten.
-  - Added `tests/test_config_macro_policy.py` to compile-check `_ACCL_*` aliases and the
-    `_ACCL_STD_NO_EXCEPTIONS -> _ASCEND_STD_NO_EXCEPTIONS` bridge.
+- Advanced Node 5 minimal foundational dependencies:
+  - Added ACCL bootstrap headers for `__utility/move.h`, `__utility/forward.h`, and
+    `__utility/pair.h`.
+  - Added minimal `__type_traits` pieces used by those utilities:
+    `integral_constant.h`, `remove_reference.h`, `is_reference.h`, `is_same.h`, and
+    `conditional.h`.
+  - Added focused bootstrap versions of `__functional/identity.h`,
+    `__functional/operations.h`, and `__algorithm/comp.h`.
+  - Updated `repos/accl/libascendcxx/include/ascend/std/__algorithm/minmax.h` to include and return
+    the migrated `ascend::std::pair` instead of defining a local inline pair substitute.
+  - Added `tests/test_foundational_dependencies.py`, a g++ host semantic test covering self-includes,
+    value-category forwarding, move-only construction, pair reference semantics, `minmax` reference
+    ordering, identity, operations, and algorithm comparator helpers.
+  - Updated `docs/migration_ledger.md` so `minmax.h` is no longer marked blocked by the missing
+    pair design; real upstream revalidation remains a Node 6 task.
 
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
-- `git status --short`: clean before Node 4 edits.
-- `git log -1 --oneline`: `95e341e feat: add cccl include dependency graph`.
-- `conda run -n accl python -m pytest tests/test_config_macro_policy.py`: passed (`1 passed`).
-- `conda run -n accl python -m pytest`: passed (`174 passed`).
+- `git status --short`: clean before Node 5 edits.
+- `git log -1 --oneline`: `9f8ae71 docs: decide accl config macro layer`.
+- `conda run -n accl python -m pytest tests/test_foundational_dependencies.py`: passed (`1 passed`).
+- `bash repos/accl/libascendcxx/run_host_test.sh`: passed `host.minmax`.
+- `conda run -n accl python -m pytest`: passed (`175 passed`).
 - `conda run -n accl python main.py selftest`: passed.
 
 ## Next Concrete Task
 
-Start Node 5: Minimal Foundational Dependencies:
+Continue Node 5 or start Node 6, depending on desired scope:
 
-1. Start with `__utility/move.h`, `__utility/forward.h`, and `__utility/pair.h`.
-2. Add only the minimal `__type_traits` pieces required by those utilities and the first
-   algorithms.
-3. Add `__functional/identity.h`, `__functional/operations.h`, and `__algorithm/comp.h` only as
-   needed.
-4. Add focused self-include or host semantic tests.
-5. Make `minmax` depend on a real migrated `pair` instead of its local inline substitute.
+1. If continuing Node 5, add only immediately needed missing foundational pieces such as public
+   aggregation headers (`ascend/std/utility`, `ascend/std/functional`, `ascend/std/type_traits`) or
+   additional traits when a concrete algorithm requires them.
+2. If moving to Node 6, revalidate `max`, `min`, `clamp`, `swap`, and `minmax` against the real
+   read-only CCCL headers/tests and update `docs/migration_ledger.md` from that evidence.
+3. Keep examples unchanged until the quality gates for the corresponding real upstream items pass.
 
 ## Files and Directories to Treat Carefully
 
