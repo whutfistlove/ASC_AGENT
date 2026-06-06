@@ -18,46 +18,47 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 2 work: `6ec4c8d feat: add real cccl header inventory`.
+- Latest checked commit before Node 3 work: `dd34e7b feat: add real cccl test index`.
 
 ## What Changed This Session
 
-- Completed Node 2 real CCCL test indexing:
-  - Added `core/test_index.py` for read-only scans of the real upstream
-    `libcudacxx/test/libcudacxx/std` tree.
-  - Added `main.py test-index`, resolving CCCL from `--cccl-repo`, `CCCL_REPO`, then
-    `/home/zhenyu/projects/cccl`.
-  - Indexes `.pass.cpp`, `.verify.cpp`, `.fail.cpp`, and helper headers
-    (`.h`, `.hpp`, `.cuh`).
-  - Extracts direct `cuda/std/...` includes from indexed files and builds candidate
-    header/test mappings from actual include information, not fixture-style parallel paths.
-  - Reports unmapped headers and unmapped tests in deterministic JSON at
-    `outputs/cccl_test_index.json`.
-  - Added fixture-based tests in `tests/test_test_index.py`.
-  - Ran a real read-only scan of `/home/zhenyu/projects/cccl`; it found 2,581 tests,
-    38 helper headers, 65 directly mapped headers, 721 unmapped headers, and 68
-    unmapped tests.
+- Completed Node 3 include dependency graph:
+  - Added `core/dep_graph.py` to turn header inventory include data into a deterministic
+    in-tree dependency graph.
+  - Keeps only dependencies that exist under `libcudacxx/include/cuda/std`; missing
+    `cuda/std/...` includes are reported as `unknown_cuda_std_includes` and are not graph edges.
+  - Returns dependency-first/leaf-first ordering for migration planning.
+  - Detects include cycles safely and records them in the report.
+  - Added `main.py dep-graph`, resolving CCCL from `--cccl-repo`, `CCCL_REPO`, then
+    `/home/zhenyu/projects/cccl`, and writing `outputs/cccl_dep_graph.json`.
+  - Added fixture tests in `tests/test_dep_graph.py`, including A -> B -> C ordering and
+    cycle reporting.
+  - Ran a real read-only scan of `/home/zhenyu/projects/cccl`; it found 786 headers,
+    6,889 in-tree dependency edges, 31 unknown `cuda/std/...` includes, and 1 cycle:
+    `__internal/pstl_config.h -> detail/__config -> __internal/pstl_config.h`.
 
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
-- `git status --short`: clean before Node 2 edits.
-- `git log -1 --oneline`: `6ec4c8d feat: add real cccl header inventory`.
-- `conda run -n accl python -m pytest tests/test_test_index.py`: passed (`5 passed`).
-- `conda run -n accl python main.py test-index --cccl-repo /home/zhenyu/projects/cccl`:
-  passed; wrote `outputs/cccl_test_index.json`.
-- `conda run -n accl python -m pytest`: passed (`169 passed`).
+- `git status --short`: clean before Node 3 edits.
+- `git log -1 --oneline`: `dd34e7b feat: add real cccl test index`.
+- `conda run -n accl python -m pytest tests/test_dep_graph.py`: passed (`4 passed`).
+- `conda run -n accl python -m pytest tests/test_inventory.py tests/test_test_index.py`:
+  passed (`13 passed`).
+- `conda run -n accl python main.py dep-graph --cccl-repo /home/zhenyu/projects/cccl`:
+  passed; wrote `outputs/cccl_dep_graph.json`.
+- `conda run -n accl python -m pytest`: passed (`173 passed`).
 - `conda run -n accl python main.py selftest`: passed.
 
 ## Next Concrete Task
 
-Start Node 3: implement include dependency graph support:
+Start Node 4: Config and Macro Layer Decision:
 
-1. Parse `#include <cuda/std/...>` and `#include "cuda/std/..."` from headers.
-2. Keep dependencies within `libcudacxx/include/cuda/std`.
-3. Build a graph and return a leaf-first topological order.
-4. Detect cycles safely.
-5. Add fixture tests for A -> B -> C ordering.
+1. Evaluate current `_ASCEND_*` macros in `ascend/std/__config`.
+2. Compare with a possible `_ACCL_*` compatibility layer.
+3. Decide whether to keep `_ASCEND_*`, migrate to `_ACCL_*`, or support aliases.
+4. Record the decision in `docs/decisions.md`.
+5. Keep existing headers/tests passing.
 
 ## Files and Directories to Treat Carefully
 

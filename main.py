@@ -26,6 +26,7 @@ import yaml
 
 from core.agent_tools import build_toolbox, distill_error_lines
 from core.config import Config
+from core.dep_graph import scan_dependency_graph, write_dependency_graph_report
 from core.example_promote import discover_promotable, promote_operator
 from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
 from core.inventory import scan_header_inventory, write_inventory_report
@@ -874,6 +875,24 @@ def cmd_test_index(args) -> int:
     return 0
 
 
+def cmd_dep_graph(args) -> int:
+    """Scan CCCL headers and write a deterministic include dependency graph report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_dependency_graph(args.cccl_repo)
+    report_path = write_dependency_graph_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL libcudacxx include dependency graph ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"header_root: {report.header_root}")
+    print(f"headers: {summary['header_count']}")
+    print(f"edges: {summary['edge_count']}")
+    print(f"cycles: {summary['cycle_count']}")
+    print(f"unknown_cuda_std_includes: {summary['unknown_cuda_std_include_count']}")
+    print(f"report: {report_path}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -1010,6 +1029,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名",
     )
     p_test_index.set_defaults(func=cmd_test_index)
+
+    p_dep_graph = sub.add_parser(
+        "dep-graph",
+        help="只读扫描真实 CCCL libcudacxx headers，并写入 include dependency graph 报告",
+    )
+    p_dep_graph.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_dep_graph.add_argument(
+        "--output",
+        default="cccl_dep_graph.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_dep_graph.set_defaults(func=cmd_dep_graph)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"
