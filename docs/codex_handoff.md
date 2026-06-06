@@ -18,41 +18,46 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- This handoff was created while implementing the long-cycle development workflow.
+- Latest checked commit before Node 2 work: `6ec4c8d feat: add real cccl header inventory`.
 
 ## What Changed This Session
 
-- Completed Node 1 real CCCL header inventory:
-  - Added `core/inventory.py` for read-only scans of the real upstream CCCL tree.
-  - Added `main.py inventory`, resolving CCCL from `--cccl-repo`, `CCCL_REPO`, then
+- Completed Node 2 real CCCL test indexing:
+  - Added `core/test_index.py` for read-only scans of the real upstream
+    `libcudacxx/test/libcudacxx/std` tree.
+  - Added `main.py test-index`, resolving CCCL from `--cccl-repo`, `CCCL_REPO`, then
     `/home/zhenyu/projects/cccl`.
-  - Scans `libcudacxx/include/cuda/std` and records header relative path, module,
-    filename, public/private shape, and `cuda/std/...` include list.
-  - Writes deterministic JSON to `outputs/cccl_header_inventory.json`.
-  - Added fixture-based tests in `tests/test_inventory.py`.
-  - Ran a real read-only scan of `/home/zhenyu/projects/cccl`; it found 786 headers.
+  - Indexes `.pass.cpp`, `.verify.cpp`, `.fail.cpp`, and helper headers
+    (`.h`, `.hpp`, `.cuh`).
+  - Extracts direct `cuda/std/...` includes from indexed files and builds candidate
+    header/test mappings from actual include information, not fixture-style parallel paths.
+  - Reports unmapped headers and unmapped tests in deterministic JSON at
+    `outputs/cccl_test_index.json`.
+  - Added fixture-based tests in `tests/test_test_index.py`.
+  - Ran a real read-only scan of `/home/zhenyu/projects/cccl`; it found 2,581 tests,
+    38 helper headers, 65 directly mapped headers, 721 unmapped headers, and 68
+    unmapped tests.
 
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
-- `git status --short`: clean before Node 1 edits.
-- `git log -1 --oneline`: `837fc45 chore: baseline accl development environment`.
-- `conda run -n accl python -m pytest tests/test_inventory.py`: passed (`8 passed`).
-- `conda run -n accl python main.py inventory`: passed; wrote
-  `outputs/cccl_header_inventory.json` with 786 headers.
-- `conda run -n accl python -m pytest`: passed (`164 passed`).
+- `git status --short`: clean before Node 2 edits.
+- `git log -1 --oneline`: `6ec4c8d feat: add real cccl header inventory`.
+- `conda run -n accl python -m pytest tests/test_test_index.py`: passed (`5 passed`).
+- `conda run -n accl python main.py test-index --cccl-repo /home/zhenyu/projects/cccl`:
+  passed; wrote `outputs/cccl_test_index.json`.
+- `conda run -n accl python -m pytest`: passed (`169 passed`).
 - `conda run -n accl python main.py selftest`: passed.
 
 ## Next Concrete Task
 
-Start Node 2: implement real CCCL test indexing:
+Start Node 3: implement include dependency graph support:
 
-1. Scan `libcudacxx/test/libcudacxx/std` in the real upstream CCCL repository.
-2. Index `.pass.cpp`, `.verify.cpp`, `.fail.cpp`, and helper headers.
-3. Extract `cuda/std/...` includes from tests.
-4. Build candidate header/test mappings without assuming fixture-style parallel paths.
-5. Report unmapped headers and unmapped tests.
-6. Add fixture-based unit tests before scanning the full upstream test tree.
+1. Parse `#include <cuda/std/...>` and `#include "cuda/std/..."` from headers.
+2. Keep dependencies within `libcudacxx/include/cuda/std`.
+3. Build a graph and return a leaf-first topological order.
+4. Detect cycles safely.
+5. Add fixture tests for A -> B -> C ordering.
 
 ## Files and Directories to Treat Carefully
 

@@ -34,6 +34,7 @@ from core.operator_test import OperatorTestRunner
 from core.path_mapper import expected_guard_from_relpath, map_cccl_test_path, map_target_relpath
 from core.pipeline import FakeVerifier, Pipeline, RunResult
 from core.repo_verify import RepoVerifier
+from core.test_index import scan_test_index, write_test_index_report
 from core.test_migrator import migrate_operator_tests
 from core.utils import save_text
 
@@ -854,6 +855,25 @@ def cmd_inventory(args) -> int:
     return 0
 
 
+def cmd_test_index(args) -> int:
+    """Scan real CCCL libcudacxx tests and write a deterministic JSON report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_test_index(args.cccl_repo)
+    report_path = write_test_index_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL libcudacxx test index ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"test_root: {report.test_root}")
+    print(f"tests: {summary['test_count']}")
+    print(f"helper_headers: {summary['helper_header_count']}")
+    print(f"mapped_headers: {summary['mapped_header_count']}")
+    print(f"unmapped_headers: {summary['unmapped_header_count']}")
+    print(f"unmapped_tests: {summary['unmapped_test_count']}")
+    print(f"report: {report_path}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -975,6 +995,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名",
     )
     p_inventory.set_defaults(func=cmd_inventory)
+
+    p_test_index = sub.add_parser(
+        "test-index",
+        help="只读扫描真实 CCCL libcudacxx tests，并写入 header/test mapping 报告",
+    )
+    p_test_index.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_test_index.add_argument(
+        "--output",
+        default="cccl_test_index.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_test_index.set_defaults(func=cmd_test_index)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"
