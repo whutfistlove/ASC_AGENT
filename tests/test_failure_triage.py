@@ -31,6 +31,11 @@ def test_classify_driver_link_is_env():
     assert classify_failure(log).kind == ENV
 
 
+def test_classify_unsupported_soc_version_is_env():
+    log = "SOC_VERSION Ascend950PR_9599 does not support, the support list is ascend910b1"
+    assert classify_failure(log).kind == ENV
+
+
 def test_classify_cann_register_link_is_env():
     log = "/usr/bin/ld: libregister.so: undefined reference to `ge::OpDesc::GetType() const'"
     assert classify_failure(log).kind == ENV

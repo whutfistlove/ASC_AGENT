@@ -1,11 +1,4 @@
-// ACCL-side host test for swap, migrated from the CCCL swap test.
-//
-// swap(a, b) is IN-PLACE and returns void. The migrated test exchanges two
-// lvalues and checks that the values actually moved. It must NEVER be written
-// as `auto out = ascend::std::swap(a, b)` — that would force a wrong, value
-// returning signature onto the operator. The operator's CCCL semantics are
-// ground truth; the test adapts to them, not the other way around.
-#include "ascend/std/__algorithm/swap.h"
+#include "ascend/std/__utility/swap.h"
 #include <iostream>
 
 static int g_failures = 0;
@@ -32,6 +25,16 @@ int main()
     ascend::std::swap(x, y);
     expect_eq("swap(x=3.5,y=-1) -> x", x, -1.0f);
     expect_eq("swap(x=3.5,y=-1) -> y", y, 3.5f);
+
+    int u[3] = {1, 2, 3};
+    int v[3] = {4, 5, 6};
+    ascend::std::swap(u, v);
+    expect_eq("swap(u,v) -> u[0]", u[0], 4);
+    expect_eq("swap(u,v) -> u[1]", u[1], 5);
+    expect_eq("swap(u,v) -> u[2]", u[2], 6);
+    expect_eq("swap(u,v) -> v[0]", v[0], 1);
+    expect_eq("swap(u,v) -> v[1]", v[1], 2);
+    expect_eq("swap(u,v) -> v[2]", v[2], 3);
 
     return g_failures == 0 ? 0 : 1;
 }

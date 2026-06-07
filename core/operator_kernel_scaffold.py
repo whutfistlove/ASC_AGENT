@@ -460,11 +460,11 @@ class KernelScaffoldBuilder:
         )
 
     @classmethod
-    def cmakelists(cls) -> str:
+    def cmakelists(cls, soc_version: str = KERNEL_SOC_VERSION) -> str:
         return (
             "cmake_minimum_required(VERSION 3.16)\n"
             "project(Ascend_c)\n\n"
-            f'set(SOC_VERSION "{KERNEL_SOC_VERSION}" CACHE STRING "system on chip type")\n'
+            f'set(SOC_VERSION "{soc_version}" CACHE STRING "system on chip type")\n'
             "set(ASCEND_CANN_PACKAGE_PATH $ENV{ASCEND_HOME_PATH}\n"
             '    CACHE STRING "ASCEND CANN package installation directory"\n'
             ")\n"

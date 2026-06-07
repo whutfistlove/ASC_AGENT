@@ -11,18 +11,21 @@
 // <algorithm>
 
 // template<LessThanComparable T>
-//   const T&
-//   max(const T& a, const T& b);
+//   pair<const T&, const T&>
+//   minmax(const T& a, const T& b);
 
 #include <cuda/std/algorithm>
 #include <cuda/std/cassert>
+#include <cuda/std/utility>
 
 #include "test_macros.h"
 
 template <class T>
-__host__ __device__ constexpr void test(const T& a, const T& b, const T& x)
+__host__ __device__ constexpr void test(const T& a, const T& b, const T& x, const T& y)
 {
-  assert(&cuda::std::max(a, b) == &x);
+  cuda::std::pair<const T&, const T&> p = cuda::std::minmax(a, b);
+  assert(&p.first == &x);
+  assert(&p.second == &y);
 }
 
 __host__ __device__ constexpr bool test()
@@ -30,21 +33,22 @@ __host__ __device__ constexpr bool test()
   {
     int x = 0;
     int y = 0;
-    test(x, y, x);
-    test(y, x, y);
+    test(x, y, x, y);
+    test(y, x, y, x);
   }
   {
     int x = 0;
     int y = 1;
-    test(x, y, y);
-    test(y, x, y);
+    test(x, y, x, y);
+    test(y, x, x, y);
   }
   {
     int x = 1;
     int y = 0;
-    test(x, y, x);
-    test(y, x, x);
+    test(x, y, y, x);
+    test(y, x, y, x);
   }
+
   return true;
 }
 

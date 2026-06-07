@@ -35,6 +35,7 @@ from core.operator_test import OperatorTestRunner
 from core.path_mapper import expected_guard_from_relpath, map_cccl_test_path, map_target_relpath
 from core.pipeline import FakeVerifier, Pipeline, RunResult
 from core.repo_verify import RepoVerifier
+from core.sample_revalidation import build_sample_revalidation_report, write_sample_revalidation_report
 from core.test_index import scan_test_index, write_test_index_report
 from core.test_migrator import migrate_operator_tests
 from core.utils import save_text
@@ -893,6 +894,32 @@ def cmd_dep_graph(args) -> int:
     return 0
 
 
+def cmd_revalidate_samples(args) -> int:
+    """Write the Node 6 real-upstream sample revalidation report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = build_sample_revalidation_report(
+        args.cccl_repo,
+        target_repo=config.target_repo,
+    )
+    report_path = write_sample_revalidation_report(report, config.output_dir, filename=args.output)
+    summary = report["summary"]
+    print("== Node 6 sample revalidation ==")
+    print(f"cccl_repo: {report['cccl_repo']}")
+    print(f"test_root: {report['test_root']}")
+    print(f"samples: {summary['sample_count']}")
+    print(f"mapped_samples: {summary['mapped_sample_count']}")
+    for sample in report["samples"]:
+        print(
+            f"- {sample['name']}: {sample['status']}, "
+            f"header={sample['upstream_header']}, tests={len(sample['candidate_tests'])}, "
+            f"target_exists={sample['target_header_exists']}, host={sample['host_test_exists']}, "
+            f"kernel_spec={sample['kernel_spec_exists']}"
+        )
+    print(f"report: {report_path}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -1044,6 +1071,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名",
     )
     p_dep_graph.set_defaults(func=cmd_dep_graph)
+
+    p_revalidate = sub.add_parser(
+        "revalidate-samples",
+        help="只读参考真实 CCCL，汇总 Node 6 既有样本的 header/test 映射证据",
+    )
+    p_revalidate.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_revalidate.add_argument(
+        "--output",
+        default="sample_revalidation.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_revalidate.set_defaults(func=cmd_revalidate_samples)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"

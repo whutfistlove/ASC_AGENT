@@ -1,12 +1,3 @@
-// ACCL-side host test for max, migrated from the CCCL max test.
-//
-// Conventions every migrated host test MUST follow:
-//   * include the migrated ACCL header by its repo-relative path;
-//   * print EACH case with its actual values via expect_eq(...);
-//   * return 0 only if every case passed, non-zero otherwise (so ctest fails).
-//
-// max is a binary value-returning op, so we compare the result to an
-// INDEPENDENT expected value (a literal here), never to ascend::std::max again.
 #include "ascend/std/__algorithm/max.h"
 #include <iostream>
 
@@ -21,14 +12,37 @@ static void expect_eq(const char* expr, T got, T expected)
     if (!ok) ++g_failures;
 }
 
+static void expect_true(const char* expr, bool cond)
+{
+    std::cout << "[host][max] " << expr << " = " << (cond ? "true" : "false")
+              << " (expected true) " << (cond ? "OK" : "FAIL") << std::endl;
+    if (!cond) ++g_failures;
+}
+
 int main()
 {
     expect_eq("max(1, 2)", ascend::std::max(1, 2), 2);
     expect_eq("max(2, 1)", ascend::std::max(2, 1), 2);
     expect_eq("max(5.0f, 3.0f)", ascend::std::max(5.0f, 3.0f), 5.0f);
+    expect_eq("max(-4, -9)", ascend::std::max(-4, -9), -4);
 
-    auto comp = [](int a, int b) { return a < b; };
-    expect_eq("max(10, 20, comp)", ascend::std::max(10, 20, comp), 20);
+    {
+        int a = 7;
+        int b = 7;
+        expect_true("&max(a, b) == &a (equal values)", &ascend::std::max(a, b) == &a);
+    }
+
+    {
+        auto comp = [](int x, int y) { return x < y; };
+        expect_eq("max(10, 20, comp)", ascend::std::max(10, 20, comp), 20);
+        expect_eq("max(20, 10, comp)", ascend::std::max(20, 10, comp), 20);
+    }
+
+    {
+        auto greater = [](int x, int y) { return x > y; };
+        expect_eq("max(10, 20, greater)", ascend::std::max(10, 20, greater), 10);
+        expect_eq("max(20, 10, greater)", ascend::std::max(20, 10, greater), 10);
+    }
 
     return g_failures == 0 ? 0 : 1;
 }

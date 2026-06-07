@@ -77,6 +77,11 @@ repo_verify:
 retry:
   max_fix_rounds: 5
 
+tests:
+  # Match the CANN 9.0.0-alpha.1 setup validated in /home/zhenyu/projects/mylearn.
+  kernel_soc_version: Ascend910_9599
+  kernel_cannsim_soc_version: Ascend950
+
 examples:
   example_1:
     cccl: "${PROJECT_ROOT}/examples/headers/max.cccl.h"

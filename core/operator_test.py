@@ -86,6 +86,8 @@ class OperatorTestRunner:
             fast_kernel if fast_kernel is not None
             else getattr(config, "fast_kernel", False)
         )
+        self._kernel_soc_version = getattr(config, "kernel_soc_version", KERNEL_SOC_VERSION)
+        self._kernel_cannsim_soc_version = getattr(config, "kernel_cannsim_soc_version", "Ascend950")
 
         self._target_repo = Path(config.target_repo).resolve()
         self._libascendcxx = self._target_repo / "libascendcxx"
@@ -254,13 +256,11 @@ class OperatorTestRunner:
     ) -> str:
         return KernelScaffoldBuilder.main_cpp(algo, include_path, fast, kernel_spec)
 
-    @classmethod
-    def _kernel_cmakelists(cls) -> str:
-        return KernelScaffoldBuilder.cmakelists()
+    def _kernel_cmakelists(self) -> str:
+        return KernelScaffoldBuilder.cmakelists(self._kernel_soc_version)
 
-    @classmethod
-    def _kernel_run_test_sh(cls, algo: str) -> str:
-        return scaffold_scripts.run_test_sh(algo)
+    def _kernel_run_test_sh(self, algo: str) -> str:
+        return scaffold_scripts.run_test_sh(algo, self._kernel_cannsim_soc_version)
 
     @classmethod
     def _host_run_test_sh(cls, algo: str) -> str:

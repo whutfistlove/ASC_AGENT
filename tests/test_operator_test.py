@@ -248,6 +248,20 @@ def test_prepare_tests_refreshes_existing_kernel_cmakelists(tmp_path):
     assert "--allow-shlib-undefined" in text
 
 
+def test_prepare_tests_uses_configured_kernel_soc_versions(tmp_path):
+    cfg = _make_config(tmp_path)
+    cfg.raw.setdefault("tests", {})["kernel_soc_version"] = "Ascend910_9599"
+    cfg.raw.setdefault("tests", {})["kernel_cannsim_soc_version"] = "Ascend950"
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    res = runner.prepare_tests("libascendcxx/include/ascend/std/__algorithm/max.h")
+
+    cmake_text = Path(res.kernel_test_dir, "CMakeLists.txt").read_text(encoding="utf-8")
+    run_text = Path(res.kernel_test_dir, "run_test.sh").read_text(encoding="utf-8")
+    assert 'set(SOC_VERSION "Ascend910_9599"' in cmake_text
+    assert "cannsim record ./ascendc_kernels_bbit -s Ascend950" in run_text
+
+
 # --------------------------------------------------------------------------- #
 # overwrite 不再用 SMOKE 占位覆盖真实 host 测试（footgun 修复）
 # --------------------------------------------------------------------------- #
