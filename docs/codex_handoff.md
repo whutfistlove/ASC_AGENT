@@ -18,9 +18,24 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 7 work: `6a2aad3 feat: revalidate node6 samples against real cccl`.
+- Latest checked commit before Node 8 work: `8c50f58 feat: complete node7 first algorithm batch`.
 
 ## What Changed This Session
+
+- Advanced Node 8 public aggregation headers:
+  - Completed `ascend/std/algorithm` with only validated public components from Nodes 6/7:
+    `clamp`, `max`, `min`, `minmax`, and the `swap` compatibility wrapper backed by
+    validated `ascend/std/__utility/swap.h`. Historical synthetic samples such as `sort3`
+    and `quad_fanout`, plus broader unvalidated algorithms, remain excluded.
+  - Refined `ascend/std/numeric` to expose the validated numeric API through `gcd.h`, `lcm.h`,
+    and `midpoint.h`.
+  - Added minimal public aggregation headers for validated foundational pieces:
+    `ascend/std/type_traits`, `ascend/std/utility`, and `ascend/std/functional`.
+  - Did not add `ascend/std/iterator`; no iterator internals have been prepared and validated yet.
+  - Added public include/semantic host tests:
+    `public_algorithm_tests.cpp`, `public_numeric_tests.cpp`, `public_type_traits_tests.cpp`,
+    `public_utility_tests.cpp`, and `public_functional_tests.cpp`.
+  - Updated `docs/migration_ledger.md` with a public aggregation header status table.
 
 - Advanced Node 7 first real algorithm batch for the new numeric algorithms after the Node 6 samples:
   - Re-ran the real read-only CCCL scans from `/home/zhenyu/projects/cccl`:
@@ -69,8 +84,19 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
-- `git status --short`: clean before Node 7 edits.
-- `git log -1 --oneline`: `6a2aad3 feat: revalidate node6 samples against real cccl`.
+- `git status --short`: clean before Node 8 edits.
+- `git log -1 --oneline`: `8c50f58 feat: complete node7 first algorithm batch`.
+- ACCL Node 8 public aggregation validation:
+  - `conda run -n accl cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` from
+    `repos/accl/libascendcxx`: passed.
+  - `conda run -n accl cmake --build build --target public_algorithm_host_test public_functional_host_test public_numeric_host_test public_type_traits_host_test public_utility_host_test`:
+    passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.public_(algorithm|functional|numeric|type_traits|utility)$" -V`:
+    passed (`5/5`).
+  - `conda run -n accl ctest --test-dir build -R "host\\.(max|min|clamp|swap|minmax|gcd|lcm|midpoint|public_algorithm|public_functional|public_numeric|public_type_traits|public_utility)$" -V`:
+    passed (`13/13`).
+  - `conda run -n accl python -m pytest`: passed (`181 passed`).
+  - `conda run -n accl python main.py selftest`: passed.
 - `conda run -n accl python main.py inventory --cccl-repo /home/zhenyu/projects/cccl`: passed and
   wrote `outputs/cccl_header_inventory.json` (786 headers).
 - `conda run -n accl python main.py test-index --cccl-repo /home/zhenyu/projects/cccl`: passed and
@@ -116,13 +142,15 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 7 has migrated and validated the first new numeric algorithms after the Node 6 samples. Next:
+Node 8 has made the validated user-facing include headers available without broad migration. Next:
 
-1. Decide whether to extend Node 7 to the next small algorithm set (`find`, `find_if`, `count`,
-   `count_if`, `all_of`, `any_of`, `none_of`) or stop here and move to Node 8 public aggregation.
-2. For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
+1. Start Node 9 automated status and ledger: generate a machine-readable migration status report
+   from real inventory plus the ACCL target repo.
+2. Track `pending`, `generated`, `host_passed`, `kernel_passed`, `full_passed`, `blocked_env`, and
+   `blocked_design`, then use that report to keep `docs/migration_ledger.md` accurate.
+3. For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
    multiple dtype/pointer-shaped contracts cleanly.
-3. Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
+4. Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
    installation changes.
 
 ## Files and Directories to Treat Carefully

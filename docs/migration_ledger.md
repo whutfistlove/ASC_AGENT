@@ -35,6 +35,17 @@ Status values:
 | `__numeric` | `gcd_lcm.h` / `lcm.h` | kernel_passed | Node 7 real inventory maps upstream implementation to shared `__numeric/gcd_lcm.h`; `lcm.h` is an ACCL compatibility wrapper. Relevant upstream tests include `numeric.ops.lcm/lcm.pass.cpp` plus bool/non-integral compile-fail tests. ACCL host test uses independent gcd-based lcm golden logic across zero, signed, unsigned, mixed-width, negative, and LWG#2837-style cases and passed with `host.lcm`. Fast cannsim kernel uses `int32_t` exact comparison and independent golden logic and passed with `kernel.lcm.sim` (`KERNEL_SIM_RESULT: PASS`). Compile-fail tests are not yet wired into the ACCL scaffold. |
 | `__numeric` | `midpoint.h` | kernel_passed | Node 7 real inventory maps upstream implementation to `/home/zhenyu/projects/cccl/libcudacxx/include/cuda/std/__numeric/midpoint.h`; relevant upstream tests are `midpoint.integer.pass.cpp`, `midpoint.float.pass.cpp`, `midpoint.pointer.pass.cpp`, and `midpoint.verify.cpp`. ACCL host test uses independent wide-integer golden logic plus float and pointer checks and passed with `host.midpoint`. Fast cannsim kernel covers `int32_t` midpoint, including `INT32_MIN`/`INT32_MAX`, with independent `int64_t` golden logic and passed with `kernel.midpoint.sim` (`KERNEL_SIM_RESULT: PASS`). Float/pointer kernel variants and the upstream verify test are deferred because the current kernel scaffold is scalar dtype-based. |
 
+## Public Aggregation Headers
+
+| Public header | Status | Exposed validated components | Notes |
+| --- | --- | --- | --- |
+| `ascend/std/algorithm` | host_passed | `clamp`, `max`, `min`, `minmax`, `swap` | Node 8 includes only the real-upstream validated Node 6 algorithm surface plus the `swap` compatibility wrapper backed by validated `__utility/swap.h`. It intentionally excludes historical synthetic samples and broader algorithms. `host.public_algorithm` passed. |
+| `ascend/std/numeric` | host_passed | `gcd`, `lcm`, `midpoint` | Node 8 keeps the public numeric header limited to Node 7 validated numeric APIs through the thin `gcd.h`/`lcm.h` wrappers and `midpoint.h`. `host.public_numeric` passed. |
+| `ascend/std/type_traits` | host_passed | `conditional`, `integral_constant`, `is_reference`, `is_same`, `remove_reference` | Minimal foundational aggregation for headers already covered by Node 5 bootstrap semantic tests. `host.public_type_traits` passed. |
+| `ascend/std/utility` | host_passed | `forward`, `move`, `pair`, `swap` | Minimal foundational aggregation for Node 5/6 validated utility pieces. `host.public_utility` passed. |
+| `ascend/std/functional` | host_passed | `identity`, arithmetic/comparison function objects from `operations.h` | Minimal foundational aggregation for Node 5 validated functional pieces. `host.public_functional` passed. |
+| `ascend/std/iterator` | pending | none | Not added in Node 8 because no iterator internals have been prepared and validated yet. |
+
 ## Ledger Rules
 
 - Do not mark `full_passed` without recording the exact tests/checks that passed.

@@ -19,7 +19,10 @@
 #ifndef ASCEND_STD_ALGORITHM
 #define ASCEND_STD_ALGORITHM
 
+#include "ascend/std/__algorithm/clamp.h"
 #include "ascend/std/__algorithm/max.h"
-// ... other algorithms
+#include "ascend/std/__algorithm/min.h"
+#include "ascend/std/__algorithm/minmax.h"
+#include "ascend/std/__algorithm/swap.h"
 
 #endif // ASCEND_STD_ALGORITHM
