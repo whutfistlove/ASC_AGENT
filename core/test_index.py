@@ -9,6 +9,7 @@ from pathlib import Path
 from core.inventory import (
     HEADER_ROOT_REL,
     include_to_header_relpath,
+    is_env_file,
     parse_cuda_std_includes,
     resolve_cccl_repo,
     scan_header_inventory,
@@ -176,7 +177,7 @@ def scan_test_index(
 
     tests: list[CCCLTestIndexEntry] = []
     helper_headers: list[CCCLTestIndexEntry] = []
-    for path in sorted(p for p in test_root.rglob("*") if p.is_file()):
+    for path in sorted(p for p in test_root.rglob("*") if p.is_file() and not is_env_file(p)):
         kind = classify_test_kind(path)
         if kind is not None:
             tests.append(_entry(path, test_root, kind=kind, known_headers=known_headers))

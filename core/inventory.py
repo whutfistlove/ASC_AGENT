@@ -90,6 +90,11 @@ def include_to_header_relpath(include_path: str) -> str | None:
     return include_path[len(prefix):]
 
 
+def is_env_file(path: str | Path) -> bool:
+    name = Path(path).name
+    return name == ".env" or name.startswith(".env.")
+
+
 def infer_header_module(relative_path: str) -> str:
     parts = [p for p in relative_path.split("/") if p]
     if not parts:
@@ -128,7 +133,7 @@ def scan_header_inventory(
     if not header_root.is_dir():
         raise FileNotFoundError(f"CCCL header root not found: {header_root}")
 
-    paths = sorted(p for p in header_root.rglob("*") if p.is_file())
+    paths = sorted(p for p in header_root.rglob("*") if p.is_file() and not is_env_file(p))
     headers = [_header_entry(p, header_root) for p in paths]
     return HeaderInventoryReport(
         cccl_repo=str(repo),

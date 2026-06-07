@@ -30,6 +30,11 @@ from core.dep_graph import scan_dependency_graph, write_dependency_graph_report
 from core.example_promote import discover_promotable, promote_operator
 from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
 from core.inventory import scan_header_inventory, write_inventory_report
+from core.migration_context import (
+    build_migration_context_pack_from_scans,
+    default_context_pack_filename,
+    write_migration_context_pack,
+)
 from core.migration_status import scan_migration_status, write_migration_status_report
 from core.model_client import MockModelClient, build_model_client
 from core.operator_test import OperatorTestRunner
@@ -954,6 +959,33 @@ def cmd_migration_status(args) -> int:
     return 0
 
 
+def cmd_migration_context(args) -> int:
+    """Write the Node 11 bounded AI migration context pack for one header."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    output = args.output or default_context_pack_filename(args.entry_header)
+    pack = build_migration_context_pack_from_scans(
+        entry_header=args.entry_header,
+        cccl_repo=args.cccl_repo,
+        target_repo=config.target_repo,
+        examples_root=PROJECT_ROOT / "examples",
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    report_path = write_migration_context_pack(pack, config.output_dir, filename=output)
+    print("== AI migration context pack ==")
+    print(f"entry_header: {pack['entry_header']}")
+    print(f"include: {pack['include']}")
+    print(f"dependency_closure_size: {pack['dependency_closure']['closure_size']}")
+    print(f"mapped_upstream_tests: {len(pack['mapped_upstream_tests'])}")
+    print(f"nearby_accl_sibling_headers: {len(pack['nearby_accl_sibling_headers'])}")
+    print(f"relevant_validated_examples: {len(pack['relevant_validated_examples'])}")
+    print(f"target_counterpart_exists: {pack['existing_accl_counterpart']['exists']}")
+    print(f"report: {report_path}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -1135,6 +1167,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名",
     )
     p_status.set_defaults(func=cmd_migration_status)
+
+    p_context = sub.add_parser(
+        "migration-context",
+        help="生成 Node 11 bounded AI migration context pack JSON",
+    )
+    p_context.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __algorithm/all_of.h",
+    )
+    p_context.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_context.add_argument(
+        "--output",
+        help="写入 outputs/ 下的报告文件名；默认按 entry header 自动生成",
+    )
+    p_context.set_defaults(func=cmd_migration_context)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"

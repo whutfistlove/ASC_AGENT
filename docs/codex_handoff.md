@@ -18,9 +18,29 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 10 work: `e0b8329 docs: add node10 migration roadmap`.
+- Latest checked commit before Node 11 work: `846edc9 feat: add node10 status-driven planning`.
 
 ## What Changed This Session
+
+- Implemented Node 11 AI migration context pack:
+  - Added `core/migration_context.py`, a deterministic bounded context-pack builder for one entry
+    CCCL header. The pack includes source header metadata/content, dependency closure summary,
+    existing ACCL counterpart content if present, nearby ACCL sibling headers, mapped upstream
+    tests, relevant validated few-shot examples, and compact ledger/status evidence.
+  - Added `main.py migration-context --entry-header <header>` to write a JSON context pack under
+    `outputs/`, with default filenames such as
+    `outputs/migration_context_algorithm__all_of.h.json`.
+  - The context pack uses explicit bounds for source, ACCL, sibling, test, and example text so it
+    can be fed into future AI/API migration calls without dumping unrelated real CCCL content.
+  - Added fixture coverage in `tests/test_migration_context.py` for source metadata, A -> B -> C
+    dependency closure ordering, existing ACCL counterpart capture, sibling capture, mapped tests,
+    validated examples, ledger/status evidence, deterministic JSON output, and output filename
+    validation.
+  - Hardened source/test scanning by skipping `.env` and `.env.*` files in `core/inventory.py` and
+    `core/test_index.py`; the context reader also refuses to read `.env` paths.
+  - Generated a real read-only context pack for `/home/zhenyu/projects/cccl` entry
+    `__algorithm/all_of.h`: dependency closure size 24, 0 direct mapped upstream tests, 4 nearby
+    ACCL sibling headers, 3 relevant validated examples, and no existing ACCL counterpart.
 
 - Advanced Node 10 status-driven batch planning:
   - Extended `core/migration_status.py` so raw missing dependency edges remain available while each
@@ -126,6 +146,20 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
+- `git status --short`: clean before Node 11 edits.
+- `git log -1 --oneline`: `846edc9 feat: add node10 status-driven planning`.
+- Node 11 focused validation:
+  - `conda run -n accl python -m pytest tests/test_migration_context.py`: passed (`4 passed`).
+  - `conda run -n accl python -m pytest tests/test_migration_context.py tests/test_inventory.py tests/test_test_index.py tests/test_dep_graph.py tests/test_migration_status.py`:
+    passed (`25 passed`).
+  - `conda run -n accl python main.py migration-context --cccl-repo /home/zhenyu/projects/cccl --entry-header __algorithm/all_of.h`:
+    passed and wrote `outputs/migration_context_algorithm__all_of.h.json`.
+  - The generated `all_of` context pack is valid JSON, about 46 KB, and contains no `.env` or
+    `SECRET` strings in a text scan.
+  - `conda run -n accl python -m pytest`: passed (`189 passed`).
+  - `conda run -n accl python main.py selftest`: passed.
+
+- `git branch --show-current`: `develop_jzy`.
 - `git status --short`: clean before Node 10 edits.
 - `git log -1 --oneline`: `e0b8329 docs: add node10 migration roadmap`.
 - Node 10 focused validation:
@@ -217,18 +251,16 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 10 has been implemented and verified in the working tree. The next task should start at
-Node 11 in `AGENTS.md`.
+Node 11 has been implemented and verified in the working tree. The next task should start at
+Node 12 in `AGENTS.md`, with Node 13 close behind for test-context quality.
 
 Planned next-node sequence:
 
-1. Node 11: build an AI migration context pack so model/API calls receive source, dependency,
-   test, sibling, example, and ledger context in a bounded structure.
-2. Node 12: connect dependency closure to AI header rewriting so missing dependencies are migrated
+1. Node 12: connect dependency closure to AI header rewriting so missing dependencies are migrated
    leaf-first before an entry header.
-3. Node 13: upgrade AI test migration to use real upstream test mappings and explicit
+2. Node 13: upgrade AI test migration to use real upstream test mappings and explicit
    applicable/deferred test classification.
-4. Node 14: run the first dependency-aware AI-driven real algorithm batch. Current Node 10 planning
+3. Node 14: run the first dependency-aware AI-driven real algorithm batch. Current Node 10 planning
    recommends beginning with `all_of`, `any_of`, `find_if`, and `none_of`, then reassessing nearby
    candidates. Defer `find`, `count`, and `count_if` until their larger dependency gaps are reduced.
 
