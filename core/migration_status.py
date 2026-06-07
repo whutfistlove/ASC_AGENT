@@ -32,6 +32,35 @@ STATUS_VALUES: tuple[str, ...] = (
 _STATUS_RANK = {status: idx for idx, status in enumerate(STATUS_VALUES)}
 _LEDGER_STATUSES = set(STATUS_VALUES)
 _TARGET_STD_PREFIX = "libascendcxx/include/ascend/std"
+MISSING_DEPENDENCY_CLASSIFICATIONS: tuple[str, ...] = (
+    "true_dependency_gap",
+    "bootstrap_manual",
+    "target_only_compatibility_wrapper",
+    "public_aggregation_narrowed",
+    "deferred_upstream_support_only",
+)
+_PUBLIC_AGGREGATION_HEADERS = {
+    "algorithm",
+    "functional",
+    "iterator",
+    "numeric",
+    "type_traits",
+    "utility",
+}
+_BOOTSTRAP_MANUAL_COVERAGE = {
+    "detail/__config": "__config",
+}
+_DEFERRED_UPSTREAM_SUPPORT_PREFIXES = (
+    "__cccl/",
+    "__internal/",
+    "__support/",
+    "detail/",
+)
+_TARGET_ONLY_COMPATIBILITY_WRAPPERS = {
+    "__algorithm/swap.h",
+    "__numeric/gcd.h",
+    "__numeric/lcm.h",
+}
 
 
 @dataclass(frozen=True)
@@ -91,9 +120,11 @@ class TargetOnlyHeaderEntry:
     ledger_status: str | None
     host_test_exists: bool
     kernel_spec_exists: bool
+    classification: str
 
     def to_dict(self) -> dict:
         return {
+            "classification": self.classification,
             "host_test_exists": self.host_test_exists,
             "kernel_spec_exists": self.kernel_spec_exists,
             "ledger_status": self.ledger_status,
@@ -107,12 +138,60 @@ class MissingDependencyEntry:
     header: str
     dependency: str
     dependency_target_relpath: str
+    classification: str
+    reason: str
 
     def to_dict(self) -> dict:
         return {
+            "classification": self.classification,
             "dependency": self.dependency,
             "dependency_target_relpath": self.dependency_target_relpath,
             "header": self.header,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class BatchCandidateEntry:
+    source_header: str
+    include: str
+    module: str
+    shape: str
+    target_relpath: str
+    status: str
+    dependency_closure_size: int
+    true_missing_dependency_count: int
+    classified_missing_dependency_counts: dict[str, int]
+    mapped_tests: list[str]
+    test_kind_counts: dict[str, int]
+    host_test_suitability: str
+    kernel_test_suitability: str
+    target_exists: bool
+    host_test_exists: bool
+    kernel_spec_exists: bool
+    score: int
+    rank_reasons: list[str]
+
+    def to_dict(self) -> dict:
+        return {
+            "classified_missing_dependency_counts": dict(self.classified_missing_dependency_counts),
+            "dependency_closure_size": self.dependency_closure_size,
+            "host_test_exists": self.host_test_exists,
+            "host_test_suitability": self.host_test_suitability,
+            "include": self.include,
+            "kernel_spec_exists": self.kernel_spec_exists,
+            "kernel_test_suitability": self.kernel_test_suitability,
+            "mapped_tests": list(self.mapped_tests),
+            "module": self.module,
+            "rank_reasons": list(self.rank_reasons),
+            "score": self.score,
+            "shape": self.shape,
+            "source_header": self.source_header,
+            "status": self.status,
+            "target_exists": self.target_exists,
+            "target_relpath": self.target_relpath,
+            "test_kind_counts": dict(self.test_kind_counts),
+            "true_missing_dependency_count": self.true_missing_dependency_count,
         }
 
 
@@ -130,18 +209,24 @@ class MigrationStatusReport:
     unmapped_headers: list[str]
     ledger_entries: list[LedgerStatusEntry]
     dep_graph_cycles: list[list[str]]
+    batch_candidates: list[BatchCandidateEntry]
 
     def summary(self) -> dict:
         status_counts = {status: 0 for status in STATUS_VALUES}
         for entry in self.headers:
             status_counts[entry.status] += 1
         migrated_headers = [entry.source_header for entry in self.headers if entry.status != "pending"]
+        classification_counts = {name: 0 for name in MISSING_DEPENDENCY_CLASSIFICATIONS}
+        for entry in self.missing_dependencies:
+            classification_counts[entry.classification] += 1
         return {
+            "batch_candidate_count": len(self.batch_candidates),
             "dep_graph_cycle_count": len(self.dep_graph_cycles),
             "header_count": len(self.headers),
             "ledger_entry_count": len(self.ledger_entries),
             "mapped_header_count": len(self.mapped_tests),
             "migrated_header_count": len(migrated_headers),
+            "missing_dependency_classification_counts": classification_counts,
             "missing_dependency_count": len(self.missing_dependencies),
             "status_counts": status_counts,
             "target_only_header_count": len(self.target_only_headers),
@@ -152,6 +237,7 @@ class MigrationStatusReport:
     def to_dict(self) -> dict:
         migrated_headers = [entry.source_header for entry in self.headers if entry.status != "pending"]
         return {
+            "batch_candidates": [entry.to_dict() for entry in self.batch_candidates],
             "cccl_repo": self.cccl_repo,
             "dep_graph_cycles": [list(cycle) for cycle in self.dep_graph_cycles],
             "header_root": self.header_root,
@@ -303,6 +389,262 @@ def _status_for(
     return status
 
 
+def _manual_coverage_target(
+    dependency: str,
+    *,
+    target_root: Path,
+    target_repo_prefix: str,
+) -> str | None:
+    covered_by = _BOOTSTRAP_MANUAL_COVERAGE.get(dependency)
+    if not covered_by:
+        return None
+    target_relpath = normalize_path_str(target_repo_prefix).rstrip("/") + "/" + covered_by
+    if (target_root / target_relpath).exists():
+        return target_relpath
+    return None
+
+
+def _target_only_wrapper_covers(
+    dependency: str,
+    *,
+    target_root: Path,
+    target_repo_prefix: str,
+) -> str | None:
+    if dependency not in _TARGET_ONLY_COMPATIBILITY_WRAPPERS:
+        return None
+    target_relpath = target_relpath_for_header(dependency, target_repo_prefix=target_repo_prefix)
+    if (target_root / target_relpath).exists():
+        return target_relpath
+    return None
+
+
+def _classify_missing_dependency(
+    *,
+    header: str,
+    dependency: str,
+    target_root: Path,
+    target_repo_prefix: str,
+) -> tuple[str, str]:
+    if header in _PUBLIC_AGGREGATION_HEADERS:
+        return (
+            "public_aggregation_narrowed",
+            "public aggregation header is intentionally limited to validated ACCL components",
+        )
+
+    covered_by = _manual_coverage_target(
+        dependency,
+        target_root=target_root,
+        target_repo_prefix=target_repo_prefix,
+    )
+    if covered_by:
+        return ("bootstrap_manual", f"covered by hand-authored ACCL bootstrap header {covered_by}")
+
+    wrapper = _target_only_wrapper_covers(
+        dependency,
+        target_root=target_root,
+        target_repo_prefix=target_repo_prefix,
+    )
+    if wrapper:
+        return (
+            "target_only_compatibility_wrapper",
+            f"covered by ACCL compatibility wrapper {wrapper}",
+        )
+
+    if dependency.startswith(_DEFERRED_UPSTREAM_SUPPORT_PREFIXES):
+        return (
+            "deferred_upstream_support_only",
+            "upstream support/config surface is deferred until a direct migration need is selected",
+        )
+
+    return ("true_dependency_gap", "dependency target is missing and must be migrated or replaced")
+
+
+def _target_only_classification(source_like: str) -> str:
+    if source_like == "__config":
+        return "bootstrap_manual"
+    if source_like in _TARGET_ONLY_COMPATIBILITY_WRAPPERS:
+        return "target_only_compatibility_wrapper"
+    return "target_only"
+
+
+def _test_kind_counts(mapped_tests: list[str], test_kind_by_path: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for test in mapped_tests:
+        kind = test_kind_by_path.get(test)
+        if kind:
+            counts[kind] = counts.get(kind, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _dependency_closure(header: str, dep_map: dict[str, list[str]]) -> list[str]:
+    seen: set[str] = set()
+    order: list[str] = []
+
+    def visit(node: str) -> None:
+        for dep in dep_map.get(node, []):
+            if dep in seen:
+                continue
+            seen.add(dep)
+            visit(dep)
+            order.append(dep)
+
+    visit(header)
+    return sorted(order)
+
+
+def _candidate_suitability(test_kind_counts: dict[str, int]) -> tuple[str, str, list[str]]:
+    reasons: list[str] = []
+    pass_count = test_kind_counts.get("pass", 0)
+    fail_count = test_kind_counts.get("fail", 0)
+    verify_count = test_kind_counts.get("verify", 0)
+    if pass_count:
+        host = "has_pass_tests"
+        kernel = "kernel_candidate_needs_spec_review"
+        reasons.append("has_pass_tests")
+    elif fail_count or verify_count:
+        host = "compile_or_verify_only"
+        kernel = "not_kernel_ready"
+        reasons.append("has_no_pass_tests")
+    else:
+        host = "needs_test_mapping_or_substitute"
+        kernel = "needs_kernel_suitability_review"
+        reasons.append("has_no_mapped_tests")
+    return host, kernel, reasons
+
+
+def _classify_candidate_dependency_counts(
+    *,
+    header: str,
+    closure: list[str],
+    target_root: Path,
+    target_repo_prefix: str,
+    segment_substitutions: list[dict] | None,
+) -> dict[str, int]:
+    counts = {name: 0 for name in MISSING_DEPENDENCY_CLASSIFICATIONS}
+    for dep in closure:
+        dep_target = target_relpath_for_header(
+            dep,
+            target_repo_prefix=target_repo_prefix,
+            segment_substitutions=segment_substitutions,
+        )
+        if (target_root / dep_target).exists():
+            continue
+        classification, _ = _classify_missing_dependency(
+            header=header,
+            dependency=dep,
+            target_root=target_root,
+            target_repo_prefix=target_repo_prefix,
+        )
+        counts[classification] += 1
+    return counts
+
+
+def _candidate_score(
+    *,
+    header: HeaderMigrationStatusEntry,
+    closure_size: int,
+    missing_counts: dict[str, int],
+    test_kind_counts: dict[str, int],
+    reasons: list[str],
+) -> int:
+    score = 100
+    if header.shape == "public":
+        score -= 45
+        reasons.append("public_facade_deferred_until_internals_ready")
+    if header.module == "__algorithm":
+        score += 30
+        reasons.append("algorithm_module")
+    elif header.module in {"__numeric", "__utility", "__functional", "__type_traits"}:
+        score += 12
+        reasons.append("foundational_or_numeric_module")
+
+    pass_count = test_kind_counts.get("pass", 0)
+    fail_count = test_kind_counts.get("fail", 0)
+    verify_count = test_kind_counts.get("verify", 0)
+    score += min(pass_count, 3) * 15
+    score -= (fail_count + verify_count) * 10
+    score -= closure_size * 2
+    score -= missing_counts["true_dependency_gap"] * 18
+    score -= missing_counts["deferred_upstream_support_only"] * 4
+    score -= missing_counts["bootstrap_manual"] * 1
+    if not pass_count and (fail_count or verify_count):
+        score -= 20
+    if not header.mapped_tests:
+        score -= 8
+    if missing_counts["true_dependency_gap"] == 0:
+        reasons.append("dependency_closure_available_or_ignorable")
+    else:
+        reasons.append("has_true_dependency_gaps")
+    return score
+
+
+def _build_batch_candidates(
+    *,
+    headers: list[HeaderMigrationStatusEntry],
+    dep_map: dict[str, list[str]],
+    test_kind_by_path: dict[str, str],
+    target_root: Path,
+    target_repo_prefix: str,
+    segment_substitutions: list[dict] | None,
+) -> list[BatchCandidateEntry]:
+    candidates: list[BatchCandidateEntry] = []
+    for header in headers:
+        if header.status != "pending" or header.target_exists:
+            continue
+        if header.source_header in _PUBLIC_AGGREGATION_HEADERS:
+            continue
+        if header.source_header.startswith(_DEFERRED_UPSTREAM_SUPPORT_PREFIXES):
+            continue
+        closure = _dependency_closure(header.source_header, dep_map)
+        missing_counts = _classify_candidate_dependency_counts(
+            header=header.source_header,
+            closure=closure,
+            target_root=target_root,
+            target_repo_prefix=target_repo_prefix,
+            segment_substitutions=segment_substitutions,
+        )
+        test_counts = _test_kind_counts(header.mapped_tests, test_kind_by_path)
+        host_suitability, kernel_suitability, reasons = _candidate_suitability(test_counts)
+        score = _candidate_score(
+            header=header,
+            closure_size=len(closure),
+            missing_counts=missing_counts,
+            test_kind_counts=test_counts,
+            reasons=reasons,
+        )
+        candidates.append(
+            BatchCandidateEntry(
+                source_header=header.source_header,
+                include=header.include,
+                module=header.module,
+                shape=header.shape,
+                target_relpath=header.target_relpath,
+                status=header.status,
+                dependency_closure_size=len(closure),
+                true_missing_dependency_count=missing_counts["true_dependency_gap"],
+                classified_missing_dependency_counts=missing_counts,
+                mapped_tests=list(header.mapped_tests),
+                test_kind_counts=test_counts,
+                host_test_suitability=host_suitability,
+                kernel_test_suitability=kernel_suitability,
+                target_exists=header.target_exists,
+                host_test_exists=header.host_test_exists,
+                kernel_spec_exists=header.kernel_spec_exists,
+                score=score,
+                rank_reasons=sorted(set(reasons)),
+            )
+        )
+    return sorted(
+        candidates,
+        key=lambda item: (
+            -item.score,
+            item.true_missing_dependency_count,
+            item.dependency_closure_size,
+            item.source_header,
+        ),
+    )
+
+
 def _ledger_map(entries: list[LedgerStatusEntry]) -> dict[str, str]:
     return {entry.key: entry.status for entry in entries}
 
@@ -321,6 +663,7 @@ def build_migration_status_report(
     ledger_entries = parse_migration_ledger_statuses(ledger_path) if ledger_path else []
     ledger = _ledger_map(ledger_entries)
     test_map = {mapping.header: mapping.tests for mapping in test_index.mappings}
+    test_kind_by_path = {entry.relative_path: entry.kind for entry in test_index.tests}
     dep_map = {entry.header: entry.dependencies for entry in dep_graph.graph}
 
     headers: list[HeaderMigrationStatusEntry] = []
@@ -357,12 +700,20 @@ def build_migration_status_report(
                 segment_substitutions=segment_substitutions,
             )
             if target_exists and not (target_root / dep_target).exists():
+                classification, reason = _classify_missing_dependency(
+                    header=header.relative_path,
+                    dependency=dep,
+                    target_root=target_root,
+                    target_repo_prefix=target_repo_prefix,
+                )
                 missing.append(dep)
                 missing_dependencies.append(
                     MissingDependencyEntry(
                         header=header.relative_path,
                         dependency=dep,
                         dependency_target_relpath=dep_target,
+                        classification=classification,
+                        reason=reason,
                     )
                 )
 
@@ -406,8 +757,18 @@ def build_migration_status_report(
                 ledger_status=ledger_status,
                 host_test_exists=host_exists,
                 kernel_spec_exists=kernel_exists,
+                classification=_target_only_classification(source_like),
             )
         )
+
+    batch_candidates = _build_batch_candidates(
+        headers=headers,
+        dep_map=dep_map,
+        test_kind_by_path=test_kind_by_path,
+        target_root=target_root,
+        target_repo_prefix=target_repo_prefix,
+        segment_substitutions=segment_substitutions,
+    )
 
     return MigrationStatusReport(
         cccl_repo=inventory.cccl_repo,
@@ -425,6 +786,7 @@ def build_migration_status_report(
         unmapped_headers=list(test_index.unmapped_headers),
         ledger_entries=ledger_entries,
         dep_graph_cycles=[list(cycle) for cycle in dep_graph.cycles],
+        batch_candidates=batch_candidates,
     )
 
 

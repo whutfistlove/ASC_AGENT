@@ -59,6 +59,10 @@ At the end of a completed node:
    concrete task.
 4. Leave the next conversation a clear starting point.
 
+When replying to the user about a task node, always state whether the current
+node is complete, what still needs work if anything, whether it is recommended
+to move to the next node, and what the next node should do.
+
 Do not start broad migrations until real inventory, test indexing, and dependency
 closure support are in place.
 

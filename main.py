@@ -941,6 +941,10 @@ def cmd_migration_status(args) -> int:
     print(f"migrated_headers: {summary['migrated_header_count']}")
     print(f"target_only_headers: {summary['target_only_header_count']}")
     print(f"missing_dependencies: {summary['missing_dependency_count']}")
+    print("missing_dependency_classifications:")
+    for classification, count in summary["missing_dependency_classification_counts"].items():
+        print(f"  {classification}: {count}")
+    print(f"batch_candidates: {summary['batch_candidate_count']}")
     print(f"mapped_headers: {summary['mapped_header_count']}")
     print(f"unmapped_tests: {summary['unmapped_test_count']}")
     print("status_counts:")

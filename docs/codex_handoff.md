@@ -18,9 +18,38 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 9 work: `de0988b feat: complete node8 public aggregation headers`.
+- Latest checked commit before Node 10 work: `e0b8329 docs: add node10 migration roadmap`.
 
 ## What Changed This Session
+
+- Advanced Node 10 status-driven batch planning:
+  - Extended `core/migration_status.py` so raw missing dependency edges remain available while each
+    edge is also classified as `true_dependency_gap`, `bootstrap_manual`,
+    `target_only_compatibility_wrapper`, `public_aggregation_narrowed`, or
+    `deferred_upstream_support_only`.
+  - Added target-only artifact classification so ACCL-only wrappers such as
+    `ascend/std/__algorithm/swap.h` and generated synthetic samples are distinguishable from
+    hand-authored bootstrap surfaces such as `ascend/std/__config`.
+  - Added deterministic `batch_candidates` planning output. Candidates are ranked from real CCCL
+    inventory, direct test-index mappings, dependency closure size, missing dependency
+    classifications, ACCL artifact presence, and host/kernel suitability signals. Upstream support
+    and config surfaces are deferred out of the main candidate list, and public facade headers are
+    ranked behind implementation headers until internals are ready.
+  - Added fixture coverage in `tests/test_migration_status.py` for missing dependency
+    classification, target-only classification, and candidate ordering.
+  - Updated the `main.py migration-status` CLI summary to print dependency classification counts
+    and the candidate count.
+  - Regenerated the real read-only status report from `/home/zhenyu/projects/cccl`. Current raw
+    missing dependency edges remain 439, now classified as 70 `true_dependency_gap`, 18
+    `bootstrap_manual`, 0 `target_only_compatibility_wrapper`, 315
+    `public_aggregation_narrowed`, and 36 `deferred_upstream_support_only`. The report contains
+    724 ranked batch candidates.
+  - Recommended next real migration batch from the current ranking: start with the small
+    dependency-light algorithm family `all_of`, `any_of`, `find_if`, and `none_of`; optionally add
+    nearby similarly ranked algorithms such as `find_if_not`, `for_each`, or simple copy/replace
+    variants only after Node 11/12 context and dependency orchestration are in place. Defer
+    `find`, `count`, and `count_if` for now because the current dependency report shows much larger
+    closures and many true gaps.
 
 - Advanced Node 9 automated status and ledger:
   - Added `core/migration_status.py` and the `main.py migration-status` CLI.
@@ -97,6 +126,23 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
+- `git status --short`: clean before Node 10 edits.
+- `git log -1 --oneline`: `e0b8329 docs: add node10 migration roadmap`.
+- Node 10 focused validation:
+  - `conda run -n accl python -m pytest tests/test_migration_status.py`: passed (`4 passed`).
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`.
+  - `conda run -n accl python -m pytest tests/test_migration_status.py tests/test_inventory.py tests/test_test_index.py tests/test_dep_graph.py`:
+    passed (`21 passed`).
+  - `conda run -n accl python -m pytest`: passed (`185 passed`).
+  - `conda run -n accl python main.py selftest`: passed.
+  - Current Node 10 report summary: 786 real CCCL headers, 23 source-mapped migrated headers,
+    6 ACCL target-only headers, 439 raw missing dependency edges, 724 ranked batch candidates,
+    65 mapped headers, and 68 unmapped tests. Missing dependency classifications are 70
+    `true_dependency_gap`, 18 `bootstrap_manual`, 0 `target_only_compatibility_wrapper`, 315
+    `public_aggregation_narrowed`, and 36 `deferred_upstream_support_only`.
+
+- `git branch --show-current`: `develop_jzy`.
 - `git status --short`: clean before Node 9 edits.
 - `git log -1 --oneline`: `de0988b feat: complete node8 public aggregation headers`.
 - Node 9 focused validation:
@@ -171,22 +217,20 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 9 is committed as `dba6802 feat: add node9 migration status report`. The
-next task should start at Node 10 in `AGENTS.md`.
+Node 10 has been implemented and verified in the working tree. The next task should start at
+Node 11 in `AGENTS.md`.
 
 Planned next-node sequence:
 
-1. Node 10: refine `migration-status` into status-driven batch planning by classifying missing
-   dependencies and ranking candidate real CCCL headers.
-2. Node 11: build an AI migration context pack so model/API calls receive source, dependency,
+1. Node 11: build an AI migration context pack so model/API calls receive source, dependency,
    test, sibling, example, and ledger context in a bounded structure.
-3. Node 12: connect dependency closure to AI header rewriting so missing dependencies are migrated
+2. Node 12: connect dependency closure to AI header rewriting so missing dependencies are migrated
    leaf-first before an entry header.
-4. Node 13: upgrade AI test migration to use real upstream test mappings and explicit
+3. Node 13: upgrade AI test migration to use real upstream test mappings and explicit
    applicable/deferred test classification.
-5. Node 14: run the first dependency-aware AI-driven real algorithm batch, with likely candidates
-   such as `find`, `find_if`, `count`, `count_if`, `all_of`, `any_of`, and `none_of`, subject to
-   Node 10 planning.
+4. Node 14: run the first dependency-aware AI-driven real algorithm batch. Current Node 10 planning
+   recommends beginning with `all_of`, `any_of`, `find_if`, and `none_of`, then reassessing nearby
+   candidates. Defer `find`, `count`, and `count_if` until their larger dependency gaps are reduced.
 
 Important constraints for the next session:
 
