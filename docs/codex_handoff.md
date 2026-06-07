@@ -171,17 +171,32 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 9 now provides the first machine-readable status report. Next:
+Node 9 is committed as `dba6802 feat: add node9 migration status report`. The
+next task should start at Node 10 in `AGENTS.md`.
 
-1. Commit the Node 9 changes only if requested by the user.
-2. Use `outputs/migration_status.json` to choose the next small migration batch, paying special
-   attention to missing dependency clusters rather than broad-migrating from the full pending set.
-3. Refine missing-dependency classification so intentionally narrowed public aggregation headers
-   and hand-authored bootstrap headers can be separated from true dependency-closure gaps.
-4. For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
-   multiple dtype/pointer-shaped contracts cleanly.
-5. Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
-   installation changes.
+Planned next-node sequence:
+
+1. Node 10: refine `migration-status` into status-driven batch planning by classifying missing
+   dependencies and ranking candidate real CCCL headers.
+2. Node 11: build an AI migration context pack so model/API calls receive source, dependency,
+   test, sibling, example, and ledger context in a bounded structure.
+3. Node 12: connect dependency closure to AI header rewriting so missing dependencies are migrated
+   leaf-first before an entry header.
+4. Node 13: upgrade AI test migration to use real upstream test mappings and explicit
+   applicable/deferred test classification.
+5. Node 14: run the first dependency-aware AI-driven real algorithm batch, with likely candidates
+   such as `find`, `find_if`, `count`, `count_if`, `all_of`, `any_of`, and `none_of`, subject to
+   Node 10 planning.
+
+Important constraints for the next session:
+
+- Do not broad-migrate from the full pending set.
+- Use `/home/zhenyu/projects/cccl` only as the read-only real CCCL source.
+- Treat `ASC_AGENT/repos/cccl` only as an incomplete offline fixture.
+- Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
+  installation changes.
+- For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
+  multiple dtype/pointer-shaped contracts cleanly.
 
 ## Files and Directories to Treat Carefully
 

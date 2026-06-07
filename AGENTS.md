@@ -181,6 +181,128 @@ Goal: make progress visible and machine-checkable.
   tests.
 - Use the report to keep `docs/migration_ledger.md` accurate.
 
+### Node 10: Status-Driven Batch Planning
+
+Goal: turn the machine-readable status report into actionable next-batch
+planning.
+
+- Refine `core/migration_status.py` so missing dependency data is classified,
+  not only reported as raw edges.
+- Separate true dependency-closure gaps from hand-authored bootstrap headers,
+  target-only compatibility wrappers, intentionally narrowed public aggregation
+  headers, and deferred upstream-only/support-only surfaces.
+- Rank candidate migration headers using real inventory, test mappings,
+  dependency closure size, missing dependency count, ACCL artifact presence, and
+  host/kernel test suitability.
+- Add fixture-based unit tests for the new planning/classification behavior.
+- Update `docs/codex_handoff.md` with the recommended next migration batch.
+
+### Node 11: AI Migration Context Pack
+
+Goal: provide the AI/API migration step with structured, dependency-aware
+context instead of only a single source header.
+
+- Build a deterministic context pack for an entry CCCL header.
+- Include source header metadata, dependency closure summary, existing ACCL
+  counterpart if present, nearby ACCL sibling headers, mapped upstream tests,
+  relevant validated examples, and ledger/status evidence.
+- Keep context bounded; do not dump unrelated real CCCL content into prompts.
+- Add fixture tests for context pack generation.
+- Ensure the context pack reads `/home/zhenyu/projects/cccl` only as a
+  read-only source and never reads `.env` files.
+
+### Node 12: Dependency-Aware AI Header Migration
+
+Goal: upgrade header migration from single-file AI rewriting to dependency-aware
+AI rewriting.
+
+- For an entry header, compute the dependency closure with `core/dep_graph.py`.
+- Skip already migrated and validated dependencies when safe.
+- Migrate missing dependencies in leaf-first order before the entry header.
+- Feed each AI/API rewrite call with the Node 11 context pack.
+- Preserve environment-vs-code failure triage; environment failures must not be
+  sent into model repair loops.
+- Validate the orchestration with fixture tests such as A -> B -> C ordering
+  before attempting real CCCL targets.
+
+### Node 13: AI Test Migration Upgrade
+
+Goal: make AI-generated ACCL tests use real upstream test context and independent
+validation logic.
+
+- Connect real test-index mappings to `core/test_migrator.py`.
+- Select applicable upstream `.pass.cpp` tests and explicitly mark deferred
+  `.verify.cpp`, `.fail.cpp`, compile-fail, dependency-blocked, or
+  scaffold-inexpressible tests.
+- Require host tests to use independent golden logic and return nonzero on
+  failure.
+- Require kernel specs to state dtype, inputs, outputs, and independent golden
+  logic; kernel success must inspect cannsim verification output.
+- Add unit tests for mapped/deferred test classification and guards against
+  using the tested `ascend::std::*` API as the expected value.
+
+### Node 14: First AI-Driven Real Algorithm Batch
+
+Goal: run the first dependency-aware AI migration batch on real CCCL algorithms.
+
+- Choose the batch from Node 10 planning rather than from a hand-picked broad
+  pending list.
+- Candidate family: `find`, `find_if`, `count`, `count_if`, `all_of`,
+  `any_of`, and `none_of`, subject to dependency and test suitability.
+- Use Nodes 11-13 to generate headers, host tests, and kernel specs.
+- Run relevant host/kernel tests, pytest, and selftest.
+- Update `docs/migration_ledger.md`, `outputs/migration_status.json`, and
+  `docs/codex_handoff.md`.
+- Promote only validated results into `examples/`.
+
+### Node 15: Minimal Iterator and Range Support
+
+Goal: migrate only the iterator/range support required by the first real
+algorithm batch.
+
+- Use Node 14 failures and dependency reports to identify the smallest required
+  iterator/type-trait support set.
+- Prefer focused internal headers over broad public aggregation.
+- Add host include/semantic tests for each migrated foundational piece.
+- Add `ascend/std/iterator` only after the underlying internals are prepared and
+  validated.
+
+### Node 16: AI Repair Loop Hardening
+
+Goal: improve model repair success while avoiding useless retries.
+
+- Refine failure classification for missing includes, namespace/macro issues,
+  missing type traits, semantic mismatches, kernel scaffold limits, and CANN/env
+  failures.
+- Feed AI repair with concise, high-value logs and current artifact context.
+- Track per-attempt root cause, changed artifacts, and result so repeated
+  ineffective fixes can be avoided.
+- Add unit tests for representative failure classifications.
+
+### Node 17: Promotion and Example Curation v2
+
+Goal: make validated real migrations improve future AI few-shot behavior.
+
+- Extend example promotion to record source header, upstream test evidence,
+  ACCL header, host test, kernel spec, and validation notes.
+- Promote only real-upstream mapped and validated results.
+- Exclude fixture-only and incomplete generated artifacts from gold examples.
+- Ensure retrieval prefers relevant validated examples for nearby algorithms.
+
+### Node 18: Broader Batch Migration Gate
+
+Goal: define the gate for safely moving from small AI-driven batches to larger
+batch migration.
+
+- Define batch eligibility criteria: dependency closure known, missing
+  dependencies classified, mapped tests or substitutes available, AI context
+  pack available, and host/kernel validation path clear.
+- Add batch manifest v2 planning that supports dry-run planning, mock AI runs,
+  and explicit real AI runs.
+- Produce batch-level reports and update ledger/status after each batch.
+- Do not default to broad writes or real API calls without an explicit task
+  request.
+
 ## Quality Bar
 
 - A style-clean commit is not enough to mark migration complete.
