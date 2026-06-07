@@ -5,6 +5,7 @@
     run      迁移单个 CCCL 文件，含 git 提交检查与多轮修复（真实或 --mock）
     batch    按清单批量迁移并产出汇总报告（工具链 + 测试能力的核心）
     test     为指定算子生成并执行 host/kernel 测试
+    dependency-convert  按依赖闭包 leaf-first 迁移一个 header（Node 12）
     selftest 用内置示例做一次离线冒烟（mock，无需仓库/网络）
 
 用法：
@@ -12,6 +13,7 @@
     python main.py run     --input <CCCL 文件路径> [--mock] [--dry-run]
     python main.py batch   --manifest <manifest.yaml> [--mock] [--quiet]
     python main.py test    --input <CCCL 文件路径> [--host-only | --kernel-only]
+    python main.py dependency-convert --entry-header __algorithm/all_of.h --plan-only
     python main.py selftest
 """
 
@@ -35,7 +37,11 @@ from core.migration_context import (
     default_context_pack_filename,
     write_migration_context_pack,
 )
-from core.migration_status import scan_migration_status, write_migration_status_report
+from core.migration_status import (
+    build_migration_status_report,
+    scan_migration_status,
+    write_migration_status_report,
+)
 from core.model_client import MockModelClient, build_model_client
 from core.operator_test import OperatorTestRunner
 from core.path_mapper import expected_guard_from_relpath, map_cccl_test_path, map_target_relpath
@@ -92,6 +98,15 @@ def write_batch_report(config: Config, results: list[RunResult]) -> Path:
     }
     report_path = config.output_dir / "batch_report.json"
     save_text(report_path, json.dumps(report, ensure_ascii=False, indent=2))
+    return report_path
+
+
+def write_dependency_convert_report(config: Config, result, output: str) -> Path:
+    name = Path(output)
+    if name.is_absolute() or len(name.parts) != 1:
+        raise ValueError("dependency convert report filename must be a file name under outputs/")
+    report_path = config.output_dir / name
+    save_text(report_path, json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     return report_path
 
 
@@ -986,6 +1001,67 @@ def cmd_migration_context(args) -> int:
     return 0
 
 
+def cmd_dependency_convert(args) -> int:
+    """Run the Node 12 dependency-aware header migration orchestration for one entry."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    if args.mock and args.real_ai:
+        print("error: --mock and --real-ai are mutually exclusive", file=sys.stderr)
+        return 2
+    if not args.plan_only and not (args.mock or args.real_ai):
+        print("error: choose --plan-only, --mock, or --real-ai explicitly", file=sys.stderr)
+        return 2
+
+    overrides = {"model": {"provider": "mock"}} if args.mock or args.plan_only else None
+    config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
+
+    inventory = scan_header_inventory(args.cccl_repo)
+    test_index = scan_test_index(args.cccl_repo)
+    dep_graph = scan_dependency_graph(args.cccl_repo)
+    status_report = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+
+    model_client = MockModelClient(responses=[]) if args.plan_only else (
+        MockModelClient() if args.mock else build_model_client(config)
+    )
+    pipeline = Pipeline(
+        config,
+        model_client,
+        verifier=None,
+        verbose=not args.quiet,
+        show_model_io=getattr(args, "show_model_io", False),
+        toolbox=None if args.plan_only else _maybe_build_toolbox(config),
+    )
+    result = pipeline.convert_dependency_closure(
+        entry_header=args.entry_header,
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status_report,
+        write_to_repo=not args.no_write_target,
+        plan_only=args.plan_only,
+    )
+    report_path = write_dependency_convert_report(config, result, args.output)
+
+    print("== Node 12 dependency-aware header migration ==")
+    print(f"entry_header: {result.entry_header}")
+    print(f"mode: {'plan_only' if args.plan_only else ('mock' if args.mock else 'real_ai')}")
+    print(f"ordered_headers: {len(result.ordered_headers)}")
+    print(f"skipped_headers: {len(result.skipped_headers)}")
+    print(f"rewritten_headers: {len(result.rewritten_headers)}")
+    print(f"complete: {result.complete}")
+    if result.error:
+        print(f"error: {result.error}")
+    print(f"report: {report_path}")
+    return 2 if result.error else 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -1186,6 +1262,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名；默认按 entry header 自动生成",
     )
     p_context.set_defaults(func=cmd_migration_context)
+
+    p_dep_convert = sub.add_parser(
+        "dependency-convert",
+        help="Node 12：按依赖闭包 leaf-first 迁移一个 CCCL header",
+    )
+    p_dep_convert.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __algorithm/all_of.h",
+    )
+    p_dep_convert.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_dep_convert.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="只输出 leaf-first 计划，不调用模型也不写入 ACCL",
+    )
+    p_dep_convert.add_argument("--mock", action="store_true", help="使用 mock 模型执行 dependency rewrite")
+    p_dep_convert.add_argument("--real-ai", action="store_true", help="显式允许真实模型/API 调用")
+    p_dep_convert.add_argument(
+        "--no-write-target",
+        action="store_true",
+        help="实际 rewrite 时只生成到 outputs/，不写入目标 ACCL 仓库",
+    )
+    p_dep_convert.add_argument(
+        "--output",
+        default="dependency_convert_report.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_dep_convert.add_argument("--quiet", action="store_true", help="减少日志输出")
+    p_dep_convert.add_argument(
+        "--show-model-io",
+        action="store_true",
+        help="实际 rewrite 时打印与模型的完整对话",
+    )
+    p_dep_convert.set_defaults(func=cmd_dependency_convert)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"

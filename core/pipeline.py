@@ -20,6 +20,7 @@ from core.best_of_n import best_of_n, score_header_code
 from core.config import Config
 from core.example_retrieval import select_header_examples
 from core.fix_once import run_single_fix_from_log
+from core.migration_context import build_migration_context_pack
 from core.model_client import (
     BaseModelClient,
     extract_json_object,
@@ -31,6 +32,15 @@ from core.path_mapper import (
     expected_guard_from_relpath,
 )
 from core.utils import save_text, read_text_file, call_model_maybe_tools
+
+
+SAFE_DEPENDENCY_SKIP_STATUSES = {"host_passed", "kernel_passed", "full_passed"}
+DEFERRED_UPSTREAM_SUPPORT_PREFIXES = (
+    "__cccl/",
+    "__internal/",
+    "__support/",
+    "detail/",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -64,6 +74,83 @@ class RunResult:
         return asdict(self)
 
 
+@dataclass
+class DependencyAwareHeaderResult:
+    source_header: str
+    input_path: str
+    target_relpath: str = ""
+    action: str = ""
+    reason: str = ""
+    status: str = ""
+    run_result: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class DependencyAwareRunResult:
+    entry_header: str
+    ordered_headers: list[str] = field(default_factory=list)
+    rewritten_headers: list[str] = field(default_factory=list)
+    skipped_headers: list[str] = field(default_factory=list)
+    items: list[DependencyAwareHeaderResult] = field(default_factory=list)
+    complete: bool = False
+    error: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "complete": self.complete,
+            "entry_header": self.entry_header,
+            "error": self.error,
+            "items": [item.to_dict() for item in self.items],
+            "ordered_headers": list(self.ordered_headers),
+            "rewritten_headers": list(self.rewritten_headers),
+            "skipped_headers": list(self.skipped_headers),
+        }
+
+
+def _dep_map(dep_graph) -> dict[str, list[str]]:
+    return {entry.header: list(entry.dependencies) for entry in dep_graph.graph}
+
+
+def _dependency_order_including_entry(entry_header: str, dep_graph) -> list[str]:
+    dep_map = _dep_map(dep_graph)
+    if entry_header not in dep_map:
+        raise ValueError(f"entry header not found in dependency graph: {entry_header}")
+
+    reachable: set[str] = {entry_header}
+
+    def visit(node: str) -> None:
+        for dep in dep_map.get(node, []):
+            if dep in reachable:
+                continue
+            reachable.add(dep)
+            visit(dep)
+
+    visit(entry_header)
+    order_index = {header: idx for idx, header in enumerate(dep_graph.topological_order)}
+    return sorted(reachable, key=lambda header: (order_index.get(header, 10**9), header))
+
+
+def _manual_bootstrap_cover(header: str, config: Config) -> str | None:
+    if header != "detail/__config":
+        return None
+    target_relpath = str(Path(config.target_repo_prefix) / "__config")
+    if (Path(config.target_repo) / target_relpath).exists():
+        return target_relpath
+    return None
+
+
+def _deferred_support_reason(header: str, config: Config) -> str | None:
+    covered_by = _manual_bootstrap_cover(header, config)
+    if covered_by:
+        return f"covered_by_bootstrap_manual:{covered_by}"
+    if header.startswith(DEFERRED_UPSTREAM_SUPPORT_PREFIXES):
+        return "deferred_upstream_support_only"
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Pipeline
 # --------------------------------------------------------------------------- #
@@ -89,7 +176,8 @@ class Pipeline:
     # ---- 构造初始改写请求 ---- #
     def _build_initial_request(self, input_path: Path, source_text: str,
                                module_hint: str, target_relpath: str, guard: str,
-                               examples: list[tuple[str, str]]) -> str:
+                               examples: list[tuple[str, str]],
+                               context_pack: Optional[dict] = None) -> str:
         head = f"""【当前任务文件路径】
 {input_path}
 
@@ -105,6 +193,12 @@ class Pipeline:
 【当前待改写的 CCCL 文件内容】
 {source_text}
 """
+        if context_pack is not None:
+            head += (
+                "\n【Node 11 bounded migration context pack】\n"
+                + json.dumps(context_pack, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n"
+            )
         blocks = []
         for i, (cccl, accl) in enumerate(examples, 1):
             blocks.append(
@@ -124,7 +218,7 @@ class Pipeline:
             self._log(f"[error] {result.error}")
             return result
 
-    def _rewrite(self, input_path: Path, result: RunResult) -> Path:
+    def _rewrite(self, input_path: Path, result: RunResult, context_pack: Optional[dict] = None) -> Path:
         """模型初稿：读源文件 -> 推导路径/guard -> 调模型 -> 落盘 rewritten_target.h。
 
         返回 outputs/rewritten_target.h 路径，并把映射信息写入 result。
@@ -156,7 +250,7 @@ class Pipeline:
             exclude_self=True,  # 迁 X 不拿 X 自己的答案当示例（防泄漏）
         )
         request_text = self._build_initial_request(
-            input_path, source_text, module_hint, target_relpath, guard, examples
+            input_path, source_text, module_hint, target_relpath, guard, examples, context_pack
         )
         save_text(out / "model_request.md", request_text)
 
@@ -224,6 +318,138 @@ class Pipeline:
         except Exception as exc:
             result.error = f"{type(exc).__name__}: {exc}"
             self._log(f"[error] {result.error}")
+        return result
+
+    def convert_dependency_closure(
+        self,
+        *,
+        entry_header: str,
+        inventory,
+        test_index,
+        dep_graph,
+        status_report,
+        write_to_repo: bool = True,
+        skip_statuses: Optional[set[str]] = None,
+        plan_only: bool = False,
+    ) -> DependencyAwareRunResult:
+        """Rewrite one entry header after its missing dependency closure.
+
+        The order is leaf-first according to `core.dep_graph`. Headers that
+        already exist in the ACCL target and have validation evidence are
+        skipped. Every actual rewrite receives a fresh Node 11 context pack for
+        the header being rewritten. With `plan_only=True`, this only reports the
+        ordered skip/rewrite plan and performs no model calls or writes.
+        """
+        skip_statuses = set(skip_statuses or SAFE_DEPENDENCY_SKIP_STATUSES)
+        result = DependencyAwareRunResult(entry_header=entry_header)
+        status_by_header = {entry.source_header: entry for entry in status_report.headers}
+        header_root = Path(inventory.header_root)
+
+        try:
+            ordered_headers = _dependency_order_including_entry(entry_header, dep_graph)
+        except Exception as exc:
+            result.error = f"{type(exc).__name__}: {exc}"
+            self._log(f"[error] {result.error}")
+            return result
+
+        result.ordered_headers = ordered_headers
+        self._log(
+            f"dependency-aware order for {entry_header}: "
+            + " -> ".join(ordered_headers)
+        )
+
+        for header in ordered_headers:
+            status = status_by_header.get(header)
+            input_path = header_root / header
+            target_relpath = status.target_relpath if status else ""
+            status_value = status.status if status else ""
+            is_entry = header == entry_header
+            if status and status.target_exists and status.status in skip_statuses:
+                item = DependencyAwareHeaderResult(
+                    source_header=header,
+                    input_path=str(input_path),
+                    target_relpath=status.target_relpath,
+                    action="would_skip" if plan_only else "skipped",
+                    reason=f"target_exists_with_safe_status:{status.status}",
+                    status=status.status,
+                )
+                result.items.append(item)
+                result.skipped_headers.append(header)
+                self._log(f"[skip] {header}: {item.reason}")
+                continue
+            deferred_reason = None if is_entry else _deferred_support_reason(header, self.config)
+            if deferred_reason:
+                item = DependencyAwareHeaderResult(
+                    source_header=header,
+                    input_path=str(input_path),
+                    target_relpath=target_relpath,
+                    action="would_skip" if plan_only else "skipped",
+                    reason=deferred_reason,
+                    status=status_value,
+                )
+                result.items.append(item)
+                result.skipped_headers.append(header)
+                self._log(f"[skip] {header}: {item.reason}")
+                continue
+            if plan_only:
+                item = DependencyAwareHeaderResult(
+                    source_header=header,
+                    input_path=str(input_path),
+                    target_relpath=target_relpath,
+                    action="would_rewrite",
+                    reason="missing_or_not_safely_validated",
+                    status=status_value,
+                )
+                result.items.append(item)
+                continue
+
+            pack = build_migration_context_pack(
+                entry_header=header,
+                inventory=inventory,
+                test_index=test_index,
+                dep_graph=dep_graph,
+                status_report=status_report,
+                target_repo=self.config.target_repo,
+                examples_root=self.config.project_root / "examples",
+            )
+            run_result = RunResult(input_path=str(input_path))
+            try:
+                rewritten_target = self._rewrite(input_path, run_result, context_pack=pack)
+                if write_to_repo:
+                    target_file = Path(self.config.target_repo) / run_result.target_relpath
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    target_file.write_text(
+                        rewritten_target.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+                    self._log(f"已写入目标文件: {target_file}")
+                item = DependencyAwareHeaderResult(
+                    source_header=header,
+                    input_path=str(input_path),
+                    target_relpath=run_result.target_relpath,
+                    action="rewritten",
+                    reason="dependency_closure_rewrite",
+                    status=status_value,
+                    run_result=run_result.to_dict(),
+                )
+                result.items.append(item)
+                result.rewritten_headers.append(header)
+            except Exception as exc:
+                run_result.error = f"{type(exc).__name__}: {exc}"
+                item = DependencyAwareHeaderResult(
+                    source_header=header,
+                    input_path=str(input_path),
+                    target_relpath=target_relpath,
+                    action="failed",
+                    reason=run_result.error,
+                    status=status_value,
+                    run_result=run_result.to_dict(),
+                )
+                result.items.append(item)
+                result.error = f"{header}: {run_result.error}"
+                self._log(f"[error] {result.error}")
+                return result
+
+        result.complete = True
         return result
 
     def _run_inner(self, input_path: Path, result: RunResult) -> RunResult:

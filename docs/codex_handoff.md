@@ -18,9 +18,65 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 11 work: `846edc9 feat: add node10 status-driven planning`.
+- Latest checked commit before Node 12 work: `8ef82d6 feat: add node11 migration context pack`.
 
 ## What Changed This Session
+
+- Started Node 12 dependency-aware AI header migration:
+  - Added a dependency-aware conversion path in `core/pipeline.py` that computes the entry header's
+    dependency closure from `core/dep_graph.py`, processes headers in leaf-first order, and then
+    rewrites the entry header.
+  - Added safe skip behavior for dependencies that already have ACCL target files and validation
+    evidence (`host_passed`, `kernel_passed`, or `full_passed`). `generated` headers are still
+    rewritten rather than treated as safe.
+  - Wired Node 11 context packs into actual rewrite requests. Each dependency-aware AI/API rewrite
+    now builds a fresh bounded context pack through `core/migration_context.py` for the header being
+    rewritten and includes it in the prompt alongside the source file and few-shot examples.
+  - Kept the existing single-file `convert` and `convert_only` paths compatible; the context pack is
+    optional and only added when the dependency-aware path supplies it.
+  - Updated `skills/rewrite_initial.md` so the model explicitly understands the optional bounded
+    context pack and uses it for dependency, sibling, target, test, and example evidence without
+    broadening the migration scope.
+  - Added fixture coverage in `tests/test_dependency_aware_pipeline.py` for A -> B -> C ordering
+    (`C, B, A` rewrite order), safe dependency skipping, and confirmation that every actual model
+    call receives the corresponding Node 11 context pack.
+  - Added `plan_only` support so dependency order and skip/rewrite decisions can be inspected
+    without model calls or ACCL writes.
+  - Added the `main.py dependency-convert` CLI for one explicit entry header. It supports
+    `--plan-only`, `--mock`, and `--real-ai`; actual rewrite mode requires either `--mock` or the
+    explicit `--real-ai` opt-in.
+  - Real `all_of` planning exposed a migration-boundary issue: the dependency closure includes many
+    upstream support/config headers (`__cccl/*`, `__internal/*`, and `detail/__config`) that should
+    not be bulk AI-rewritten as ordinary algorithm dependencies. The planner now defers those support
+    surfaces for non-entry dependencies, and treats `detail/__config` as covered when the
+    hand-authored ACCL `ascend/std/__config` exists.
+  - Verified the real read-only `/home/zhenyu/projects/cccl` `__algorithm/all_of.h` plan: 25 ordered
+    headers, 24 skipped support/bootstrap dependencies, and only the entry header left for rewrite.
+  - Verified `--mock --no-write-target` for real `all_of`: 24 skipped, 1 rewritten through the mock
+    model, Node 11 context pack present in the model request, and no ACCL target header written.
+  - The agreed real-AI/no-write `all_of` run could not be executed directly from Codex because the
+    sandbox blocked external API/network access and the escalated retry was rejected by execution
+    policy due to external API data-egress risk. The user then ran the same command from their WSL
+    terminal:
+    `python main.py dependency-convert --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_all_of_real_ai.json --quiet`.
+    It completed successfully with 25 ordered headers, 24 skipped support/bootstrap dependencies,
+    and 1 real-AI rewritten entry header. No ACCL target header was written.
+  - Inspected the generated `outputs/rewritten_target.h`: it maps `detail/__config` to
+    `ascend/std/__config`, uses `_ASCEND_STD_BEGIN`/`_ASCEND_STD_END`, uses `_ASCEND_AICORE_FN`,
+    and preserves the upstream iterator/predicate loop. A lightweight syntax-only check passed:
+    `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include outputs/rewritten_target.h`.
+  - Wrote the real-AI `all_of` draft into
+    `repos/accl/libascendcxx/include/ascend/std/__algorithm/all_of.h`.
+  - Added `repos/accl/libascendcxx/test/libascendcxx/ascend/host/all_of_tests.cpp` with
+    independent golden logic for positive, negative, even, empty-range, and constexpr cases.
+  - `host.all_of` passed. Kernel validation has not been attempted.
+  - Updated `docs/migration_ledger.md` to mark `__algorithm/all_of.h` as `host_passed` and
+    regenerated `outputs/migration_status.json`; the real status report now shows 24 source-mapped
+    migrated headers and 12 `host_passed` headers.
+  - Re-ran `dependency-convert --plan-only` for `all_of` after host validation; all 25 ordered
+    headers are now skipped, confirming that safe skip behavior also covers the validated entry
+    header.
+  - This remains Node 12 orchestration work. It has not yet run kernel validation for `all_of`.
 
 - Implemented Node 11 AI migration context pack:
   - Added `core/migration_context.py`, a deterministic bounded context-pack builder for one entry
@@ -144,6 +200,52 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
     example triplet too.
 
 ## Verification
+
+- `git branch --show-current`: `develop_jzy`.
+- `git status --short`: clean before Node 12 edits.
+- `git log -1 --oneline`: `8ef82d6 feat: add node11 migration context pack`.
+- Node 12 focused validation:
+  - `conda run -n accl python -m pytest tests/test_dependency_aware_pipeline.py tests/test_pipeline.py tests/test_migration_context.py tests/test_dep_graph.py`:
+    passed (`15 passed`).
+  - `conda run -n accl python -m pytest tests/test_dependency_aware_pipeline.py tests/test_pipeline.py`:
+    passed (`9 passed`) after adding CLI plan support and support-surface deferral.
+  - `conda run -n accl python -m pytest tests/test_dependency_convert_cli.py tests/test_dependency_aware_pipeline.py`:
+    passed (`7 passed`) after adding CLI safety coverage for explicit mode selection and plan-only
+    report generation.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_all_of_plan.json --quiet`:
+    passed and wrote `outputs/dependency_convert_all_of_plan.json` with 25 ordered headers, 24 skipped
+    headers, and 0 rewritten headers in plan mode.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --mock --no-write-target --output dependency_convert_all_of_mock.json --quiet`:
+    passed and wrote `outputs/dependency_convert_all_of_mock.json` with 24 skipped headers and 1
+    mock-rewritten entry header; `repos/accl/libascendcxx/include/ascend/std/__algorithm/all_of.h`
+    remained absent.
+  - Codex attempt for `conda run -n accl python main.py dependency-convert --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_all_of_real_ai.json --quiet`:
+    blocked by sandbox proxy/network permissions; escalated retry was rejected by execution policy
+    due to external API data-egress risk.
+  - User-run WSL command `python main.py dependency-convert --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_all_of_real_ai.json --quiet`:
+    passed and wrote `outputs/dependency_convert_all_of_real_ai.json` with 24 skipped headers and 1
+    real-AI rewritten entry header. `repos/accl/libascendcxx/include/ascend/std/__algorithm/all_of.h`
+    remained absent.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include outputs/rewritten_target.h`:
+    passed.
+  - `conda run -n accl cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` from
+    `repos/accl/libascendcxx`: passed.
+  - `conda run -n accl cmake --build build --target all_of_host_test` from
+    `repos/accl/libascendcxx`: passed.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include repos/accl/libascendcxx/include/ascend/std/__algorithm/all_of.h`:
+    passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.all_of$" -V` from
+    `repos/accl/libascendcxx`: passed (`1/1`).
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`; current summary is 786 headers, 24
+    source-mapped migrated headers, 6 target-only headers, 441 missing dependency edges, 723 batch
+    candidates, 65 mapped headers, and 68 unmapped tests. Status counts are 762 `pending`, 5
+    `generated`, 12 `host_passed`, 7 `kernel_passed`, and 0 for `full_passed`, `blocked_env`, and
+    `blocked_design`.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_all_of_after_host_plan.json --quiet`:
+    passed with 25 ordered headers, 25 skipped headers, and 0 rewritten headers.
+  - `conda run -n accl python -m pytest`: passed (`196 passed`).
+  - `conda run -n accl python main.py selftest`: passed.
 
 - `git branch --show-current`: `develop_jzy`.
 - `git status --short`: clean before Node 11 edits.

@@ -7,6 +7,7 @@
 4. expected_header_guard
 5. 当前待改写的 CCCL 文件内容
 6. 两组成功示例（CCCL -> ACCL）
+7. 可选的 Node 11 bounded migration context pack：包含依赖闭包、现有 ACCL 对应文件、sibling、映射测试和 validated examples
 
 必须遵守：
 1. 仅输出纯 JSON 对象，不输出 Markdown、代码块、前后解释。
@@ -16,6 +17,7 @@
 5. 不要生成 Apache 版权头（commit hook 会自动补）。
 6. 不要改变原始功能语义；仅做迁移必需改动。
 7. 参考示例学习映射规则，不要机械复制示例文本。
+8. 如果提供了 context pack，必须优先用它判断依赖、已存在目标、sibling 风格和测试语义；不要扩展到 pack 外的大范围迁移。
 
 代码风格约束：
 1. include、命名空间、宏命名与目标模块风格保持一致。
