@@ -18,9 +18,27 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 5 work: `9f8ae71 docs: decide accl config macro layer`.
+- Latest checked commit before Node 7 work: `6a2aad3 feat: revalidate node6 samples against real cccl`.
 
 ## What Changed This Session
+
+- Advanced Node 7 first real algorithm batch for the new numeric algorithms after the Node 6 samples:
+  - Re-ran the real read-only CCCL scans from `/home/zhenyu/projects/cccl`:
+    `inventory` found 786 headers, `test-index` found 2581 std tests, and `dep-graph` found 6889 edges.
+  - Confirmed upstream `gcd` and `lcm` share the real implementation header
+    `libcudacxx/include/cuda/std/__numeric/gcd_lcm.h`; ACCL now has
+    `ascend/std/__numeric/gcd_lcm.h` plus thin `gcd.h` and `lcm.h` wrappers for the current
+    per-operator scaffold layout.
+  - Added `ascend/std/__numeric/midpoint.h` and a minimal `ascend/std/numeric` aggregation header
+    for the validated numeric surfaces.
+  - Added ACCL host semantic tests for `gcd`, `lcm`, and `midpoint`. These tests use independent
+    golden logic rather than calling the tested `ascend::std` APIs as expected values.
+  - Generated fast cannsim kernel scaffolds and `kernel_spec.json` files for `gcd`, `lcm`, and
+    integer `midpoint`. `gcd`/`lcm` use `int32_t` exact comparison; `midpoint` uses `int32_t` inputs
+    with `INT32_MIN`/`INT32_MAX` cases and independent `int64_t` golden logic.
+  - Updated `docs/migration_ledger.md` to mark `gcd_lcm.h`/`gcd.h`, `gcd_lcm.h`/`lcm.h`, and
+    `midpoint.h` as `kernel_passed`, while explicitly deferring compile-fail tests, upstream
+    `midpoint.verify.cpp`, and float/pointer kernel variants.
 
 - Advanced Node 6 real-upstream sample revalidation for `max`, `min`, `clamp`, `swap`, and `minmax`:
   - Added `core/sample_revalidation.py` and the `main.py revalidate-samples` CLI. The report uses the
@@ -51,8 +69,27 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
-- `git status --short`: clean before Node 6 edits.
-- `git log -1 --oneline`: `961a4ad feat: add minimal foundational dependencies`.
+- `git status --short`: clean before Node 7 edits.
+- `git log -1 --oneline`: `6a2aad3 feat: revalidate node6 samples against real cccl`.
+- `conda run -n accl python main.py inventory --cccl-repo /home/zhenyu/projects/cccl`: passed and
+  wrote `outputs/cccl_header_inventory.json` (786 headers).
+- `conda run -n accl python main.py test-index --cccl-repo /home/zhenyu/projects/cccl`: passed and
+  wrote `outputs/cccl_test_index.json` (2581 tests, 65 mapped headers).
+- `conda run -n accl python main.py dep-graph --cccl-repo /home/zhenyu/projects/cccl`: passed and
+  wrote `outputs/cccl_dep_graph.json` (6889 edges).
+- ACCL Node 7 host validation:
+  - `conda run -n accl cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` from
+    `repos/accl/libascendcxx`: passed.
+  - `conda run -n accl cmake --build build --target gcd_host_test lcm_host_test midpoint_host_test`:
+    passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.(gcd|lcm|midpoint)$" -V`: passed (`3/3`).
+  - `conda run -n accl ctest --test-dir build -R "host\\.(max|min|clamp|swap|minmax|gcd|lcm|midpoint)$" -V`:
+    passed (`8/8`).
+- ACCL Node 7 kernel validation:
+  - `conda run -n accl ctest --test-dir build -R "kernel\\.(gcd|lcm|midpoint)\\.sim$" -V`:
+    passed (`3/3`) with `KERNEL_SIM_RESULT: PASS` for all three new kernels.
+- `conda run -n accl python -m pytest`: passed (`181 passed`).
+- `conda run -n accl python main.py selftest`: passed.
 - `conda run -n accl python -m pytest tests/test_sample_revalidation.py`: passed (`3 passed`).
 - `conda run -n accl python main.py revalidate-samples --cccl-repo /home/zhenyu/projects/cccl`:
   passed and wrote `outputs/sample_revalidation.json`.
@@ -79,12 +116,12 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 6 is complete. Move to Node 7:
+Node 7 has migrated and validated the first new numeric algorithms after the Node 6 samples. Next:
 
-1. Start the first real algorithm batch from `max`, `min`, `clamp`, `swap`, `minmax`, then `gcd`,
-   `lcm`, and `midpoint`.
-2. Use `outputs/sample_revalidation.json` and the dependency graph to avoid treating deferred
-   `*_element*` and `*_init_list*` tests as already covered by the current samples.
+1. Decide whether to extend Node 7 to the next small algorithm set (`find`, `find_if`, `count`,
+   `count_if`, `all_of`, `any_of`, `none_of`) or stop here and move to Node 8 public aggregation.
+2. For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
+   multiple dtype/pointer-shaped contracts cleanly.
 3. Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
    installation changes.
 
