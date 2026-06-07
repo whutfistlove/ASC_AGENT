@@ -30,6 +30,7 @@ from core.dep_graph import scan_dependency_graph, write_dependency_graph_report
 from core.example_promote import discover_promotable, promote_operator
 from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
 from core.inventory import scan_header_inventory, write_inventory_report
+from core.migration_status import scan_migration_status, write_migration_status_report
 from core.model_client import MockModelClient, build_model_client
 from core.operator_test import OperatorTestRunner
 from core.path_mapper import expected_guard_from_relpath, map_cccl_test_path, map_target_relpath
@@ -920,6 +921,35 @@ def cmd_revalidate_samples(args) -> int:
     return 0
 
 
+def cmd_migration_status(args) -> int:
+    """Write the Node 9 machine-readable migration status report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_migration_status(
+        args.cccl_repo,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    report_path = write_migration_status_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL -> ACCL migration status ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"target_repo: {report.target_repo}")
+    print(f"headers: {summary['header_count']}")
+    print(f"migrated_headers: {summary['migrated_header_count']}")
+    print(f"target_only_headers: {summary['target_only_header_count']}")
+    print(f"missing_dependencies: {summary['missing_dependency_count']}")
+    print(f"mapped_headers: {summary['mapped_header_count']}")
+    print(f"unmapped_tests: {summary['unmapped_test_count']}")
+    print("status_counts:")
+    for status, count in summary["status_counts"].items():
+        print(f"  {status}: {count}")
+    print(f"report: {report_path}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -1086,6 +1116,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名",
     )
     p_revalidate.set_defaults(func=cmd_revalidate_samples)
+
+    p_status = sub.add_parser(
+        "migration-status",
+        help="生成 Node 9 machine-readable migration status JSON 报告",
+    )
+    p_status.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_status.add_argument(
+        "--output",
+        default="migration_status.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_status.set_defaults(func=cmd_migration_status)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"

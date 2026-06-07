@@ -18,9 +18,22 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 8 work: `8c50f58 feat: complete node7 first algorithm batch`.
+- Latest checked commit before Node 9 work: `de0988b feat: complete node8 public aggregation headers`.
 
 ## What Changed This Session
+
+- Advanced Node 9 automated status and ledger:
+  - Added `core/migration_status.py` and the `main.py migration-status` CLI.
+  - The report is deterministic JSON written to `outputs/migration_status.json`; it combines
+    real CCCL header inventory, real test indexing, the dependency graph, the ACCL target tree,
+    and compact validation evidence parsed from `docs/migration_ledger.md`.
+  - It tracks the required status values: `pending`, `generated`, `host_passed`,
+    `kernel_passed`, `full_passed`, `blocked_env`, and `blocked_design`.
+  - It summarizes source-mapped migrated headers, ACCL target-only headers, missing dependency
+    edges, mapped tests, unmapped tests, unmapped headers, ledger entries, and dependency cycles.
+  - Added fixture-based unit tests in `tests/test_migration_status.py`.
+  - Updated `docs/migration_ledger.md` with an automated report section and current real-scan
+    summary without rewriting the human-maintained migration tables.
 
 - Advanced Node 8 public aggregation headers:
   - Completed `ascend/std/algorithm` with only validated public components from Nodes 6/7:
@@ -84,6 +97,22 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
+- `git status --short`: clean before Node 9 edits.
+- `git log -1 --oneline`: `de0988b feat: complete node8 public aggregation headers`.
+- Node 9 focused validation:
+  - `conda run -n accl python -m pytest tests/test_migration_status.py tests/test_inventory.py tests/test_test_index.py tests/test_dep_graph.py`:
+    passed (`21 passed`).
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`.
+  - `conda run -n accl python -m pytest`: passed (`185 passed`).
+  - `conda run -n accl python main.py selftest`: passed.
+  - Current report summary: 786 real CCCL headers, 23 source-mapped migrated headers,
+    6 ACCL target-only headers, 439 raw missing dependency edges, 65 mapped headers,
+    and 68 unmapped tests. Status counts are 763 `pending`, 5 `generated`,
+    11 `host_passed`, 7 `kernel_passed`, and 0 for `full_passed`, `blocked_env`,
+    and `blocked_design`.
+
+- `git branch --show-current`: `develop_jzy`.
 - `git status --short`: clean before Node 8 edits.
 - `git log -1 --oneline`: `8c50f58 feat: complete node7 first algorithm batch`.
 - ACCL Node 8 public aggregation validation:
@@ -142,15 +171,16 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 8 has made the validated user-facing include headers available without broad migration. Next:
+Node 9 now provides the first machine-readable status report. Next:
 
-1. Start Node 9 automated status and ledger: generate a machine-readable migration status report
-   from real inventory plus the ACCL target repo.
-2. Track `pending`, `generated`, `host_passed`, `kernel_passed`, `full_passed`, `blocked_env`, and
-   `blocked_design`, then use that report to keep `docs/migration_ledger.md` accurate.
-3. For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
+1. Commit the Node 9 changes only if requested by the user.
+2. Use `outputs/migration_status.json` to choose the next small migration batch, paying special
+   attention to missing dependency clusters rather than broad-migrating from the full pending set.
+3. Refine missing-dependency classification so intentionally narrowed public aggregation headers
+   and hand-authored bootstrap headers can be separated from true dependency-closure gaps.
+4. For `midpoint`, keep float/pointer kernel variants deferred until the scaffold can express
    multiple dtype/pointer-shaped contracts cleanly.
-4. Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
+5. Keep cannsim on the configured `Ascend910_9599` / `Ascend950` pairing unless the local CANN
    installation changes.
 
 ## Files and Directories to Treat Carefully

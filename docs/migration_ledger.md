@@ -2,8 +2,10 @@
 
 Last updated: 2026-06-07
 
-This ledger tracks migration completion at a human-readable level until an automated
-inventory/status generator is implemented.
+This ledger tracks migration completion at a human-readable level. Node 9 now
+also provides a machine-readable report generated from real CCCL inventory,
+test indexing, dependency graph data, the ACCL target tree, and this ledger's
+validation status rows.
 
 Status values:
 
@@ -14,6 +16,51 @@ Status values:
 - `full_passed`: all applicable tests and repo checks passed.
 - `blocked_env`: blocked by environment setup.
 - `blocked_design`: blocked by missing design or unsupported mapping.
+
+## Automated Status Report
+
+Generate the deterministic JSON report with:
+
+```bash
+conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl
+```
+
+Current report path: `outputs/migration_status.json`.
+
+Current real scan summary:
+
+| Metric | Value |
+| --- | ---: |
+| Real CCCL headers scanned | 786 |
+| Source-mapped migrated headers | 23 |
+| ACCL target-only headers | 6 |
+| Header/test mappings | 65 |
+| Unmapped tests | 68 |
+| Missing dependency edges from migrated source headers | 439 |
+
+Current source-mapped status counts:
+
+| Status | Count |
+| --- | ---: |
+| pending | 763 |
+| generated | 5 |
+| host_passed | 11 |
+| kernel_passed | 7 |
+| full_passed | 0 |
+| blocked_env | 0 |
+| blocked_design | 0 |
+
+Notes:
+
+- `missing_dependencies` is the raw difference between upstream CCCL include
+  dependencies and files present in the ACCL target tree for headers that have
+  an ACCL counterpart. For intentionally narrowed public aggregation headers
+  and hand-authored bootstrap headers, it is a planning signal rather than an
+  automatic failure.
+- `target_only_headers` records ACCL compatibility wrappers and historical
+  synthetic samples that do not map one-to-one to real CCCL headers.
+- `outputs/` remains generated output and must not become source input for
+  migration logic.
 
 ## Current Sample Targets
 
