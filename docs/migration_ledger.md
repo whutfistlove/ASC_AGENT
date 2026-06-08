@@ -1,6 +1,6 @@
 # Migration Ledger
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 This ledger tracks migration completion at a human-readable level. Node 9 now
 also provides a machine-readable report generated from real CCCL inventory,
@@ -32,19 +32,19 @@ Current real scan summary:
 | Metric | Value |
 | --- | ---: |
 | Real CCCL headers scanned | 786 |
-| Source-mapped migrated headers | 24 |
+| Source-mapped migrated headers | 27 |
 | ACCL target-only headers | 6 |
 | Header/test mappings | 65 |
 | Unmapped tests | 68 |
-| Missing dependency edges from migrated source headers | 441 |
+| Missing dependency edges from migrated source headers | 447 |
 
 Current source-mapped status counts:
 
 | Status | Count |
 | --- | ---: |
-| pending | 762 |
+| pending | 759 |
 | generated | 5 |
-| host_passed | 12 |
+| host_passed | 15 |
 | kernel_passed | 7 |
 | full_passed | 0 |
 | blocked_env | 0 |
@@ -71,6 +71,9 @@ Notes:
 | `__algorithm` | `min.h` | kernel_passed | Node 6 real revalidation mapped upstream header and tests: applicable tests are `min.pass.cpp` and `min_comp.pass.cpp`; `min_element*` and `min_init_list*` are deferred. ACCL host test uses independent golden logic and passed with `host.min`. Kernel fast cannsim uses independent golden `(y_ref < x_ref) ? y_ref : x_ref` and passed with `outputs/kernel_test_min.log` (`KERNEL_SIM_RESULT: PASS`). |
 | `__algorithm` | `clamp.h` | kernel_passed | Node 6 real revalidation mapped upstream `clamp.pass.cpp` and `clamp.comp.pass.cpp`. ACCL host test uses independent golden logic and passed with `host.clamp`. Kernel fast cannsim uses independent clamp golden logic and passed with `outputs/kernel_test_clamp.log` (`KERNEL_SIM_RESULT: PASS`). |
 | `__algorithm` | `all_of.h` | host_passed | Node 12 dependency-aware real-AI/no-write migration used the real `/home/zhenyu/projects/cccl` dependency graph and Node 11 context pack; support/config dependencies were skipped or covered by `ascend/std/__config`, leaving only the entry header for rewrite. The generated header was written to ACCL and passed syntax-only include validation plus `host.all_of` with independent golden logic for positive, negative, even, empty-range, and constexpr cases. Kernel validation is not yet attempted. |
+| `__algorithm` | `any_of.h` | host_passed | Node 14 dependency-aware real-AI/no-write migration used the real `/home/zhenyu/projects/cccl` dependency graph and Node 11 context pack; support/config dependencies were skipped or covered by `ascend/std/__config`, leaving only the entry header for rewrite. The generated header was written to ACCL and passed syntax-only include validation plus `host.any_of` with independent golden logic for matching, partial matching, no-match, empty-range, and constexpr cases. Kernel validation is not yet attempted. |
+| `__algorithm` | `find_if.h` | host_passed | Node 14 dependency-aware real-AI/no-write migration used the real `/home/zhenyu/projects/cccl` dependency graph and Node 11 context pack; support/config dependencies were skipped or covered by `ascend/std/__config`, leaving only the entry header for rewrite. The generated header was written to ACCL and passed syntax-only include validation plus `host.find_if` with independent golden logic for first, middle, last, repeated-first, no-match, empty-range, and constexpr cases. Kernel validation is not yet attempted. |
+| `__algorithm` | `none_of.h` | host_passed | Node 14 dependency-aware real-AI/no-write migration used the real `/home/zhenyu/projects/cccl` dependency graph and Node 11 context pack; support/config dependencies were skipped or covered by `ascend/std/__config`, leaving only the entry header for rewrite. The generated header was written to ACCL and passed syntax-only include validation plus `host.none_of` with independent golden logic for matching, partial matching, no-match, empty-range, and constexpr cases. Kernel validation is not yet attempted. |
 | `__utility` | `swap.h` | kernel_passed | Node 6 corrected the real upstream source area from historical `__algorithm/swap.h` to `__utility/swap.h`; `__algorithm/swap.h` remains a compatibility wrapper. Real tests mapped to `utility.swap/swap.pass.cpp` and `swap_array.pass.cpp`. ACCL host test includes `__utility/swap.h`, uses independent golden logic, and passed with `host.swap`. Kernel fast cannsim verifies the swapped first value against `y_ref` and passed with `outputs/kernel_test_swap.log` (`KERNEL_SIM_RESULT: PASS`). |
 | `__algorithm` | `minmax.h` | kernel_passed | Node 6 real revalidation mapped upstream header and tests: applicable tests are `minmax.pass.cpp` and `minmax_comp.pass.cpp`; `minmax_element*` and `minmax_init_list*` are deferred. Header depends on migrated `__utility/pair.h`. ACCL host test uses independent golden logic and passed with `host.minmax`. Kernel fast cannsim verifies both pair outputs with independent golden logic and passed with `outputs/kernel_test_minmax.log` (`KERNEL_SIM_RESULT: PASS`). |
 | `__utility` | `move.h` | host_passed | Bootstrap ACCL implementation passed focused g++ semantic coverage in `tests/test_foundational_dependencies.py`. |

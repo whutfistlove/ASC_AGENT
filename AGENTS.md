@@ -59,6 +59,12 @@ At the end of a completed node:
    concrete task.
 4. Leave the next conversation a clear starting point.
 
+When a task needs real model/API access, especially commands using
+`--real-ai`, do not assume Codex can run them directly. First run local
+plan/mock/no-write validation where possible, then give the user the exact
+terminal command, expected output/report path, and follow-up validation command
+to run from the project root and active `accl` conda environment.
+
 When replying to the user about a task node, always state whether the current
 node is complete, what still needs work if anything, whether it is recommended
 to move to the next node, and what the next node should do.

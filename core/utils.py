@@ -96,11 +96,12 @@ def call_model_maybe_tools(model, *, stage: str, system_prompt: str, user_conten
     if show_io:
         print(f"\n{'=' * 72}\n")
 
-    # 工具调用审计：落盘 + 一行摘要，把「模型有没有调用工具」变成可见、可查的硬证据。
+    # 工具调用审计：落盘 + 一行摘要，把「模型有没有调用辅助工具」变成可见、可查的硬证据。
+    # 这里统计的是模型会话内部的 repo 读取/grep/语法检查等辅助工具，不是主模型请求次数。
     calls = list(getattr(toolbox, "call_log", []) or [])
     this_stage = calls[before:]
     names = ", ".join(c.get("name", "?") for c in this_stage) or "无"
-    print(f"[tools] {stage}：本阶段调用工具 {len(this_stage)} 次（{names}）")
+    print(f"[tools] {stage}：本阶段 AI 辅助工具调用 {len(this_stage)} 次（{names}）")
     if tool_log_tag and hasattr(toolbox, "dump_call_log") and getattr(toolbox, "output_dir", None):
         try:
             toolbox.dump_call_log(Path(toolbox.output_dir) / f"tool_calls_{tool_log_tag}.json")

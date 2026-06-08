@@ -1,6 +1,6 @@
 # Codex Handoff
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 ## Quick Start for a New Codex Session
 
@@ -18,9 +18,87 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 13 work: `93e7289 feat: add node12 dependency-aware migration`.
+- Latest checked commit before Node 14 work: `ca373d7 feat: add node13 ai test migration upgrade`.
 
 ## What Changed This Session
+
+- Started Node 14 first AI-driven real algorithm batch:
+  - Refreshed the real read-only migration status report from `/home/zhenyu/projects/cccl`.
+    Current summary is 786 headers, 27 source-mapped migrated headers, 6 target-only headers,
+    447 missing dependency edges, 720 batch candidates, 65 mapped headers, and 68 unmapped tests.
+    Status counts are 759 `pending`, 5 `generated`, 15 `host_passed`, 7 `kernel_passed`, and 0
+    for `full_passed`, `blocked_env`, and `blocked_design`.
+  - Confirmed the Node 10/13 first-batch ordering: keep `all_of`, `any_of`, `find_if`, and
+    `none_of` as the small Node 14 batch. Continue to defer `find`, `count`, and `count_if` because
+    the current report shows true dependency gaps of 28, 93, and 93 respectively.
+  - Ran dependency-aware plan-only validation for `__algorithm/any_of.h`,
+    `__algorithm/find_if.h`, and `__algorithm/none_of.h`. Each plan completed with 25 ordered
+    headers and 24 skipped support/bootstrap dependencies, leaving only the entry header as the
+    rewrite target.
+  - Ran dependency-aware `--mock --no-write-target` validation for the same three headers. Each run
+    completed with 24 skipped headers and 1 mock-rewritten entry header. No ACCL target headers were
+    written.
+  - Generated Node 11 context packs for the three pending headers. Each pack has dependency closure
+    size 24, 0 direct mapped upstream tests, 4 nearby ACCL sibling headers, 3 relevant validated
+    examples, and no existing ACCL target counterpart.
+  - Ran Node 13 `test-plan` for `any_of`, `find_if`, and `none_of`. Conservative public-header/stem
+    inference selected one applicable upstream `.pass.cpp` for each header and deferred no tests:
+    `alg.any_of/any_of.pass.cpp`, `alg.find/find_if.pass.cpp`, and
+    `alg.none_of/none_of.pass.cpp`.
+  - Rechecked existing `all_of`: `test-plan` selected `alg.all_of/all_of.pass.cpp` with no
+    deferred tests, `all_of_host_test` built successfully, and `host.all_of` passed again with the
+    checked-in independent-golden host test.
+  - Ran `test-migrate --mock` for `all_of` as a no-write CLI smoke. The flow selected one upstream
+    test and produced host/kernel fields, but the mock artifact is intentionally placeholder-like
+    and is not quality evidence for host or kernel semantics. A real-AI no-write test artifact is
+    still needed before writing kernel specs or promoting examples.
+  - The user ran the recommended real-AI/no-write command for `__algorithm/any_of.h`:
+    `python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_any_of_real_ai.json --quiet`.
+    It completed with 25 ordered headers, 24 skipped support/bootstrap dependencies, and 1 rewritten
+    entry header. The reviewed draft preserves the simple predicate loop and passed syntax-only
+    validation.
+  - Wrote the reviewed `any_of` header into
+    `repos/accl/libascendcxx/include/ascend/std/__algorithm/any_of.h`.
+  - Added `repos/accl/libascendcxx/test/libascendcxx/ascend/host/any_of_tests.cpp` with independent
+    golden logic for matching, partial matching, no-match, empty-range, and constexpr cases.
+    `host.any_of` passed. Kernel validation has not been attempted.
+  - Regenerated `outputs/migration_status.json`; the real status report now shows 25 source-mapped
+    migrated headers and 13 `host_passed` headers.
+  - The user ran the recommended real-AI/no-write command for `__algorithm/find_if.h`:
+    `python main.py dependency-convert --entry-header __algorithm/find_if.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_find_if_real_ai.json --quiet`.
+    It completed with 25 ordered headers, 24 skipped support/bootstrap dependencies, and 1 rewritten
+    entry header. The reviewed draft preserves the upstream predicate scan and passed syntax-only
+    validation.
+  - Wrote the reviewed `find_if` header into
+    `repos/accl/libascendcxx/include/ascend/std/__algorithm/find_if.h`.
+  - Added `repos/accl/libascendcxx/test/libascendcxx/ascend/host/find_if_tests.cpp` with
+    independent golden logic for first, middle, last, repeated-first, no-match, empty-range, and
+    constexpr cases. `host.find_if` passed. Kernel validation has not been attempted.
+  - Regenerated `outputs/migration_status.json`; the real status report now shows 26 source-mapped
+    migrated headers and 14 `host_passed` headers.
+  - The user ran the recommended real-AI/no-write command for `__algorithm/none_of.h`:
+    `python main.py dependency-convert --entry-header __algorithm/none_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_none_of_real_ai.json --quiet`.
+    It completed with 25 ordered headers, 24 skipped support/bootstrap dependencies, and 1 rewritten
+    entry header. The reviewed draft preserves the upstream predicate scan and passed syntax-only
+    validation.
+  - Wrote the reviewed `none_of` header into
+    `repos/accl/libascendcxx/include/ascend/std/__algorithm/none_of.h`.
+  - Added `repos/accl/libascendcxx/test/libascendcxx/ascend/host/none_of_tests.cpp` with
+    independent golden logic for matching, partial matching, no-match, empty-range, and constexpr
+    cases. `host.none_of` passed. Kernel validation has not been attempted.
+  - Re-ran the focused Node 14 host regression for `host.(any_of|find_if|none_of)`; all 3 passed.
+  - Regenerated `outputs/migration_status.json`; the real status report now shows 27 source-mapped
+    migrated headers and 15 `host_passed` headers.
+  - Improved CLI summary text for `dependency-convert` and `test-migrate`: mode now explains
+    `plan_only`, `mock`, and `real_ai`, and model provider/name is printed. A brief experiment added
+    inline meanings after `ordered_headers`, `skipped_headers`, and `rewritten_headers`, but this was
+    removed again after user feedback so the terminal summary stays compact.
+    The tool-call audit line now says "AI 辅助工具调用" to make clear that it counts model-invoked
+    helper tools such as `host_syntax_check`, not the main AI/API request count.
+  - Added an `AGENTS.md` workflow note: for real model/API commands, especially `--real-ai`, Codex
+    should first run local plan/mock/no-write validation, then give the user exact terminal commands,
+    expected report paths, and follow-up validation commands to run from the project root in the
+    active `accl` conda environment.
 
 - Started Node 13 AI test migration upgrade:
   - Added real test-index planning in `core/test_migrator.py`. Given an entry header and a
@@ -262,6 +340,118 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
+- `git status --short`: clean before Node 14 plan/mock outputs; after documentation updates, only
+  `AGENTS.md` and `docs/codex_handoff.md` are source changes.
+- `git log -1 --oneline`: `ca373d7 feat: add node13 ai test migration upgrade`.
+- Node 14 plan/mock/no-write validation:
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_any_of_plan.json --quiet`:
+    passed with 25 ordered headers, 24 skipped headers, and 0 rewritten headers in plan mode.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/find_if.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_find_if_plan.json --quiet`:
+    passed with 25 ordered headers, 24 skipped headers, and 0 rewritten headers in plan mode.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/none_of.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_none_of_plan.json --quiet`:
+    passed with 25 ordered headers, 24 skipped headers, and 0 rewritten headers in plan mode.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --mock --no-write-target --output dependency_convert_any_of_mock.json --quiet`:
+    passed with 24 skipped headers and 1 mock-rewritten entry header.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/find_if.h --cccl-repo /home/zhenyu/projects/cccl --mock --no-write-target --output dependency_convert_find_if_mock.json --quiet`:
+    passed with 24 skipped headers and 1 mock-rewritten entry header.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/none_of.h --cccl-repo /home/zhenyu/projects/cccl --mock --no-write-target --output dependency_convert_none_of_mock.json --quiet`:
+    passed with 24 skipped headers and 1 mock-rewritten entry header.
+  - `conda run -n accl python main.py migration-context --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --output migration_context_any_of.json`:
+    passed and wrote `outputs/migration_context_any_of.json`.
+  - `conda run -n accl python main.py migration-context --entry-header __algorithm/find_if.h --cccl-repo /home/zhenyu/projects/cccl --output migration_context_find_if.json`:
+    passed and wrote `outputs/migration_context_find_if.json`.
+  - `conda run -n accl python main.py migration-context --entry-header __algorithm/none_of.h --cccl-repo /home/zhenyu/projects/cccl --output migration_context_none_of.json`:
+    passed and wrote `outputs/migration_context_none_of.json`.
+  - `conda run -n accl python main.py test-plan --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --output test_plan_any_of.json`:
+    passed and selected `algorithms/alg.nonmodifying/alg.any_of/any_of.pass.cpp`; no deferred tests.
+  - `conda run -n accl python main.py test-plan --entry-header __algorithm/find_if.h --cccl-repo /home/zhenyu/projects/cccl --output test_plan_find_if.json`:
+    passed and selected `algorithms/alg.nonmodifying/alg.find/find_if.pass.cpp`; no deferred tests.
+  - `conda run -n accl python main.py test-plan --entry-header __algorithm/none_of.h --cccl-repo /home/zhenyu/projects/cccl --output test_plan_none_of.json`:
+    passed and selected `algorithms/alg.nonmodifying/alg.none_of/none_of.pass.cpp`; no deferred
+    tests.
+  - `conda run -n accl python main.py test-plan --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --output test_plan_all_of.json`:
+    passed and selected `algorithms/alg.nonmodifying/alg.all_of/all_of.pass.cpp`; no deferred tests.
+  - `conda run -n accl cmake --build build --target all_of_host_test` from
+    `repos/accl/libascendcxx`: passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.all_of$" -V` from
+    `repos/accl/libascendcxx`: passed (`1/1`).
+  - `conda run -n accl python main.py test-migrate --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --mock --output test_migrate_all_of_mock.json --quiet`:
+    passed as a CLI smoke and wrote `outputs/test_migrate_all_of_mock.json`; the mock artifact is
+    placeholder-like and not semantic validation evidence.
+  - User-run command `python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_any_of_real_ai.json --quiet`:
+    passed and wrote `outputs/dependency_convert_any_of_real_ai.json`.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include outputs/rewritten_target.h`:
+    passed for the `any_of` real-AI draft.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_any_of_plan_after_cli_text.json --quiet`:
+    passed and showed the improved CLI summary text.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --mock --no-write-target --output dependency_convert_any_of_mock_after_cli_text.json --quiet`:
+    passed and showed the improved CLI summary text.
+  - `conda run -n accl python -m pytest tests/test_dependency_convert_cli.py tests/test_dependency_aware_pipeline.py tests/test_test_migrator.py`:
+    passed (`16 passed`).
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include repos/accl/libascendcxx/include/ascend/std/__algorithm/any_of.h`:
+    passed for the checked-in ACCL `any_of` header.
+  - `conda run -n accl cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` from
+    `repos/accl/libascendcxx`: passed and registered `any_of_host_test`.
+  - `conda run -n accl cmake --build build --target any_of_host_test` from
+    `repos/accl/libascendcxx`: passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.any_of$" -V` from
+    `repos/accl/libascendcxx`: passed (`1/1`).
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`; current summary is 786 headers, 25
+    source-mapped migrated headers, 6 target-only headers, 443 missing dependency edges, 722 batch
+    candidates, 65 mapped headers, and 68 unmapped tests. Status counts are 761 `pending`, 5
+    `generated`, 13 `host_passed`, 7 `kernel_passed`, and 0 for `full_passed`, `blocked_env`, and
+    `blocked_design`.
+  - User-run command `python main.py dependency-convert --entry-header __algorithm/find_if.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_find_if_real_ai.json --quiet`:
+    passed and wrote `outputs/dependency_convert_find_if_real_ai.json`.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include outputs/rewritten_target.h`:
+    passed for the `find_if` real-AI draft.
+  - `conda run -n accl python main.py dependency-convert --entry-header __algorithm/any_of.h --cccl-repo /home/zhenyu/projects/cccl --plan-only --output dependency_convert_any_of_plan_after_cli_plain.json --quiet`:
+    passed and showed the final compact CLI summary without inline explanations after the header
+    count fields.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include repos/accl/libascendcxx/include/ascend/std/__algorithm/find_if.h`:
+    passed for the checked-in ACCL `find_if` header.
+  - `conda run -n accl cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` from
+    `repos/accl/libascendcxx`: passed and registered `find_if_host_test`.
+  - `conda run -n accl cmake --build build --target find_if_host_test` from
+    `repos/accl/libascendcxx`: passed.
+  - First `ctest --test-dir build -R "host\\.find_if$" -V` attempt was started in parallel with the
+    build and reported the executable missing before linking completed; rerunning after the build
+    completed passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.find_if$" -V` from
+    `repos/accl/libascendcxx`: passed (`1/1`).
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`; current summary is 786 headers, 26
+    source-mapped migrated headers, 6 target-only headers, 445 missing dependency edges, 721 batch
+    candidates, 65 mapped headers, and 68 unmapped tests. Status counts are 760 `pending`, 5
+    `generated`, 14 `host_passed`, 7 `kernel_passed`, and 0 for `full_passed`, `blocked_env`, and
+    `blocked_design`.
+  - User-run command `python main.py dependency-convert --entry-header __algorithm/none_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --no-write-target --output dependency_convert_none_of_real_ai.json --quiet`:
+    passed and wrote `outputs/dependency_convert_none_of_real_ai.json`.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include outputs/rewritten_target.h`:
+    passed for the `none_of` real-AI draft.
+  - `g++ -std=c++17 -fsyntax-only -I repos/accl/libascendcxx/include repos/accl/libascendcxx/include/ascend/std/__algorithm/none_of.h`:
+    passed for the checked-in ACCL `none_of` header.
+  - `conda run -n accl cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` from
+    `repos/accl/libascendcxx`: passed and registered `none_of_host_test`.
+  - `conda run -n accl cmake --build build --target none_of_host_test` from
+    `repos/accl/libascendcxx`: passed.
+  - `conda run -n accl ctest --test-dir build -R "host\\.none_of$" -V` from
+    `repos/accl/libascendcxx`: passed (`1/1`).
+  - `conda run -n accl ctest --test-dir build -R "host\\.(any_of|find_if|none_of)$" -V` from
+    `repos/accl/libascendcxx`: passed (`3/3`).
+  - `conda run -n accl python -m pytest tests/test_dependency_convert_cli.py tests/test_dependency_aware_pipeline.py tests/test_test_migrator.py`:
+    passed (`16 passed`).
+  - `conda run -n accl python main.py migration-status --cccl-repo /home/zhenyu/projects/cccl`:
+    passed and wrote `outputs/migration_status.json`; current summary is 786 headers, 27
+    source-mapped migrated headers, 6 target-only headers, 447 missing dependency edges, 720 batch
+    candidates, 65 mapped headers, and 68 unmapped tests. Status counts are 759 `pending`, 5
+    `generated`, 15 `host_passed`, 7 `kernel_passed`, and 0 for `full_passed`, `blocked_env`, and
+    `blocked_design`.
+
+- `git branch --show-current`: `develop_jzy`.
 - `git status --short`: clean before Node 13 edits.
 - `git log -1 --oneline`: `93e7289 feat: add node12 dependency-aware migration`.
 - Node 13 focused validation:
@@ -443,20 +633,31 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 13 is complete at the toolchain level: real-index upstream test planning, selected/deferred
-classification, independent-golden guards, kernel verification-marker checks, artifact/report
-threading, mock generation, and one user-run real-AI/no-write artifact generation have all been
-verified. The next task should start Node 14, but still avoid broad migration.
+Node 14 is in progress, not complete. Plan/mock/no-write validation supports the small batch
+`all_of`, `any_of`, `find_if`, and `none_of`; do not broaden to the pending list. All four headers
+are now written and host-passed. The next step is
+to have the user run real-AI/no-write commands from the project root and active `accl` conda
+environment, then inspect the generated artifacts before writing ACCL targets.
 
-Planned next-node sequence:
+Recommended next commands for the user terminal. Run the `dependency-convert` commands one at a
+time because `outputs/rewritten_target.h` is a shared temporary draft path and is overwritten by the
+next header rewrite:
 
-1. Node 14: run the first dependency-aware AI-driven real algorithm batch. Current Node 10 planning
-   recommends beginning with `all_of`, `any_of`, `find_if`, and `none_of`, then reassessing nearby
-   candidates. Defer `find`, `count`, and `count_if` until their larger dependency gaps are reduced.
-2. Node 15: migrate only the minimal iterator/range support exposed by Node 14 failures and
-   dependency reports.
-3. Node 16: harden repair-loop classification using the failures observed from the first real
-   dependency-aware batch.
+```bash
+python main.py test-migrate --entry-header __algorithm/all_of.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --output test_migrate_all_of_real_ai.json --quiet
+```
+
+After each header command finishes, inspect its `outputs/dependency_convert_*_real_ai.json` report
+and the current `outputs/rewritten_target.h` before running the next header command. After the
+`test-migrate` command finishes, inspect `outputs/test_migrate_all_of_real_ai.json`. Validate test
+artifacts with
+`validate_host_test_code` and `validate_kernel_spec` before writing tests or kernel specs. Only after
+quality review should the batch write ACCL headers/tests, run focused host/kernel validation,
+refresh `outputs/migration_status.json`, update `docs/migration_ledger.md`, and consider promotion.
+
+After Node 14 completes, Node 15 should migrate only the minimal iterator/range support exposed by
+Node 14 failures and dependency reports. Node 16 should then harden repair-loop classification using
+the first real dependency-aware batch's failures.
 
 Important constraints for the next session:
 

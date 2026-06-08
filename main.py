@@ -63,6 +63,27 @@ DEFAULT_SETTINGS = PROJECT_ROOT / "config" / "settings.yaml"
 
 
 # --------------------------------------------------------------------------- #
+# CLI 摘要
+# --------------------------------------------------------------------------- #
+def _mode_label(*, plan_only: bool = False, mock: bool = False, real_ai: bool = False) -> str:
+    if plan_only:
+        return "plan_only (只规划；不调用模型；不写 ACCL)"
+    if mock:
+        return "mock (离线模拟模型；不调用真实 API)"
+    if real_ai:
+        return "real_ai (真实模型/API 调用)"
+    return "unknown"
+
+
+def _model_label(config: Config, *, plan_only: bool = False) -> str:
+    if plan_only:
+        return "none (plan_only)"
+    if config.model_provider == "mock":
+        return f"mock (无真实 API 调用；配置 model_name={config.model_name})"
+    return f"{config.model_provider}/{config.model_name}"
+
+
+# --------------------------------------------------------------------------- #
 # 装配
 # --------------------------------------------------------------------------- #
 def make_components(mock: bool, dry_run: bool, verbose: bool,
@@ -1095,7 +1116,8 @@ def cmd_test_migrate(args) -> int:
     plan_summary = artifacts.upstream_test_plan.summary() if artifacts.upstream_test_plan else {}
     print("== Node 13 AI test migration artifacts ==")
     print(f"entry_header: {args.entry_header}")
-    print(f"mode: {'mock' if args.mock else 'real_ai'}")
+    print(f"mode: {_mode_label(mock=args.mock, real_ai=args.real_ai)}")
+    print(f"model: {_model_label(config)}")
     print(f"selected_tests: {plan_summary.get('selected_count', 0)}")
     print(f"deferred_tests: {plan_summary.get('deferred_count', 0)}")
     print(f"has_host: {artifacts.has_host()}")
@@ -1258,7 +1280,8 @@ def cmd_dependency_convert(args) -> int:
 
     print("== Node 12 dependency-aware header migration ==")
     print(f"entry_header: {result.entry_header}")
-    print(f"mode: {'plan_only' if args.plan_only else ('mock' if args.mock else 'real_ai')}")
+    print(f"mode: {_mode_label(plan_only=args.plan_only, mock=args.mock, real_ai=args.real_ai)}")
+    print(f"model: {_model_label(config, plan_only=args.plan_only)}")
     print(f"ordered_headers: {len(result.ordered_headers)}")
     print(f"skipped_headers: {len(result.skipped_headers)}")
     print(f"rewritten_headers: {len(result.rewritten_headers)}")
