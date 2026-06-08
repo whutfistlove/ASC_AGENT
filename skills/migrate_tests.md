@@ -8,8 +8,9 @@
 3. target_relpath（ACCL 头在仓库中的相对路径）
 4. CCCL 头文件内容（语义参考）
 5. 已迁移好的 ACCL 头文件内容（真实可调用签名 —— 以它为准）
-6. CCCL 侧测试代码（要迁移的用例来源）
-7. 一到两组成功示例（CCCL 测试 → ACCL host 测试 + kernel_spec）
+6. CCCL 侧测试代码（来自 real test-index 选中的适用 `.pass.cpp`；若没有 real mapping 才使用 legacy 单测试文本）
+7. real test-index 选择/延期计划：选中的 `.pass.cpp` 以及显式 deferred 的 `.verify.cpp`、`.fail.cpp`、dependency-blocked、scaffold-inexpressible tests
+8. 一到两组成功示例（CCCL 测试 → ACCL host 测试 + kernel_spec）
 
 ## 你要输出什么（严格 JSON，无 Markdown、无代码块、无多余解释）
 
@@ -19,7 +20,7 @@
   "kernel_spec": {
     "gm_inputs": 2,
     "gm_outputs": 1,
-    "dtype": "<可选；标量类型，默认 float。整数算子(如 gcd/lcm)填 int32_t/int64_t；也支持 double>",
+    "dtype": "<必填；标量类型。普通浮点算子填 float/double；整数算子(如 gcd/lcm)填 int32_t/int64_t>",
     "input_init": "<C++ 语句：用循环变量 i 填充 h_in0[i]...h_inN[i]；旧别名 h_x/h_y 也可用>",
     "element_op_code": "<C++ 语句：可读 in0_val...inN_val；给 out0_val...outM_val 赋值；旧别名 x_val/y_val/z_val 也可用>",
     "golden_code": "<C++ 语句：可读 in0_ref...inN_ref；给 expected0...expectedM 赋值；旧别名 x_ref/y_ref/expected 也可用；禁止调用 ascend::std::*>"

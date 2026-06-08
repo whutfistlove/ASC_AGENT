@@ -18,9 +18,69 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 - Branch: `develop_jzy`
 - Base commit when branch was created: `894e63a`
-- Latest checked commit before Node 12 work: `8ef82d6 feat: add node11 migration context pack`.
+- Latest checked commit before Node 13 work: `93e7289 feat: add node12 dependency-aware migration`.
 
 ## What Changed This Session
+
+- Started Node 13 AI test migration upgrade:
+  - Added real test-index planning in `core/test_migrator.py`. Given an entry header and a
+    `CCCLTestIndexReport`, the migrator now selects mapped upstream `.pass.cpp` tests as applicable
+    prompt input and records explicit deferred decisions for `.verify.cpp`, `.fail.cpp` /
+    compile-fail, dependency-blocked, scaffold-inexpressible, unsupported, missing, or selection-limit
+    cases.
+  - Extended the planner beyond direct include mappings. Real libcudacxx algorithm/numeric tests
+    often include public facades such as `cuda/std/algorithm` or `cuda/std/numeric`, not the private
+    implementation header. The planner now combines direct mappings with conservative module/stem
+    inference from the real test index, for example `__algorithm/max.h` selecting `max.pass.cpp` and
+    `max_comp.pass.cpp`, and `__numeric/midpoint.h` selecting `midpoint.*.pass.cpp`.
+  - Added `write_upstream_test_plan_report` plus the `main.py test-plan` CLI. It writes a
+    deterministic selected/deferred JSON report for one entry header under `outputs/` without model
+    calls and without ACCL writes.
+  - `test-plan` also reads the machine status report so private dependency blockers are classified
+    with current header statuses. Public facade/support includes are not treated as dependency
+    blockers for inferred private-header tests.
+  - Kept the legacy `cccl_test_text` path as a fallback, but when a real index plan has selected
+    `.pass.cpp` text, that text replaces the legacy single-test input in the model request.
+  - Connected `main.py` test migration to the real index path by inferring the CCCL root and
+    `cuda/std`-relative entry header from real libcudacxx header paths. Legacy fixture-style test path
+    discovery remains available when no real index can be scanned.
+  - Threaded the upstream test plan through the AI test generation artifacts. `MigratedTests` now
+    carries `upstream_test_plan`; `_maybe_migrate_tests` returns it; `_run_operator_tests` includes it
+    as `test_migration_plan` in the test result/report dictionary. This keeps selected/deferred
+    upstream evidence attached to generated host/kernel artifacts.
+  - Added the explicit `main.py test-migrate` CLI for Node 13. It generates host-test code,
+    `kernel_spec`, notes, and `upstream_test_plan` into an artifacts JSON report without writing ACCL
+    test files and without running host/kernel tests. It requires either `--mock` or explicit
+    `--real-ai`, mirroring the Node 12 safety gate.
+  - Strengthened host-test validation so expected/golden/oracle/reference assignments cannot call
+    `ascend::std::*`, while still allowing `ascend::std::*` as the tested value.
+  - Strengthened `kernel_spec` validation so `golden_code` cannot call `ascend::std::*` and the
+    normalized spec always records `dtype`, `gm_inputs`, and `gm_outputs`.
+  - Tightened Python-side kernel success detection: `OperatorTestRunner` now requires the outer
+    `KERNEL_SIM_RESULT: PASS` marker and the actual cannsim verification marker. The generated
+    `run_test.sh` echoes the verification marker after finding it in `cannsim.log`.
+  - Updated `skills/migrate_tests.md` and `skills/_shared/kernel_spec_contract.md` so the model sees
+    the real test-index selected/deferred plan and treats `dtype` as part of the explicit kernel
+    contract.
+  - Added fixture coverage in `tests/test_test_migrator.py` and `tests/test_operator_test.py` for
+    mapped/deferred classification, dependency-blocked and scaffold-inexpressible deferrals,
+    prevention of self-consistent expected/golden logic, normalized kernel contract fields, and
+    verification-marker-based kernel pass detection.
+  - Added `tests/test_test_plan_cli.py` for the `test-plan` CLI and fixture coverage that private
+    headers can infer applicable tests through public-header includes.
+  - Added a mock AI test-generation integration fixture in `tests/test_convert_loop.py` that uses a
+    real-layout CCCL fixture, `MockModelClient`, and `_maybe_migrate_tests` to confirm selected and
+    deferred upstream tests are present in generated artifacts without calling a real model.
+  - Added CLI coverage for `test-migrate --mock`, including mode-gate validation and deterministic
+    artifact report generation.
+  - The user ran the real-AI/no-write `test-migrate` command for `__algorithm/max.h`. It completed
+    with tool-assisted generation (`read_repo_file`, `grep_repo`, and `host_syntax_check` calls),
+    selected `max.pass.cpp` and `max_comp.pass.cpp`, produced host and kernel artifacts, and wrote
+    `outputs/test_migrate_max_real_ai.json` without ACCL writes.
+  - Inspected the real-AI `max` artifacts: host expected values are independent literals/reference
+    checks rather than calls to `ascend::std::max`; `kernel_spec` uses `dtype=float`, 2 inputs, 1
+    output, and independent golden logic `expected0 = (in0_ref < in1_ref) ? in1_ref : in0_ref;`.
+    `validate_host_test_code` and `validate_kernel_spec` both passed on the generated artifact.
 
 - Started Node 12 dependency-aware AI header migration:
   - Added a dependency-aware conversion path in `core/pipeline.py` that computes the entry header's
@@ -202,6 +262,36 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 ## Verification
 
 - `git branch --show-current`: `develop_jzy`.
+- `git status --short`: clean before Node 13 edits.
+- `git log -1 --oneline`: `93e7289 feat: add node12 dependency-aware migration`.
+- Node 13 focused validation:
+  - `conda run -n accl python -m pytest tests/test_test_migrator.py tests/test_operator_test.py tests/test_scaffold_scripts.py`:
+    passed (`29 passed`).
+  - `conda run -n accl python -m pytest tests/test_test_migrator.py tests/test_test_plan_cli.py tests/test_operator_test.py tests/test_scaffold_scripts.py`:
+    passed (`31 passed`) after adding `test-plan`.
+  - `conda run -n accl python -m pytest tests/test_convert_loop.py tests/test_test_migrator.py tests/test_test_plan_cli.py`:
+    passed (`16 passed`) after threading `upstream_test_plan` through generated artifacts and reports.
+  - `conda run -n accl python -m pytest tests/test_test_plan_cli.py tests/test_test_migrator.py tests/test_convert_loop.py`:
+    passed (`18 passed`) after adding `test-migrate --mock`.
+  - `conda run -n accl python -m pytest tests/test_convert_loop.py tests/test_llm_leverage.py tests/test_test_index.py`:
+    passed (`18 passed`).
+  - `conda run -n accl python main.py test-plan --entry-header __numeric/midpoint.h --cccl-repo /home/zhenyu/projects/cccl --output test_plan_midpoint.json`:
+    passed and wrote `outputs/test_plan_midpoint.json` with 3 selected `.pass.cpp` tests
+    (`midpoint.float`, `midpoint.integer`, `midpoint.pointer`) and 1 deferred `.verify.cpp`.
+  - `conda run -n accl python main.py test-plan --entry-header __algorithm/max.h --cccl-repo /home/zhenyu/projects/cccl --max-selected-tests 2 --output test_plan_max.json`:
+    passed and wrote `outputs/test_plan_max.json` with `max.pass.cpp` and `max_comp.pass.cpp`
+    selected; no unrelated `max_element`/`max_init_list` tests were pulled in.
+  - `conda run -n accl python main.py test-migrate --entry-header __algorithm/max.h --cccl-repo /home/zhenyu/projects/cccl --mock --output test_migrate_max_mock.json --quiet`:
+    passed and wrote `outputs/test_migrate_max_mock.json` with generated mock host/kernel artifacts,
+    `max.pass.cpp` and `max_comp.pass.cpp` selected, no deferred tests, and no ACCL writes.
+  - User-run command `python main.py test-migrate --entry-header __algorithm/max.h --cccl-repo /home/zhenyu/projects/cccl --real-ai --output test_migrate_max_real_ai.json`:
+    passed and wrote `outputs/test_migrate_max_real_ai.json` with real-AI generated host/kernel
+    artifacts; selected tests were `max.pass.cpp` and `max_comp.pass.cpp`; no deferred tests.
+  - `python3 -c "import json; from core.test_migrator import validate_host_test_code, validate_kernel_spec; d=json.load(open('outputs/test_migrate_max_real_ai.json')); validate_host_test_code(d['host_test_code'], algo_name=d.get('algo_name','')); validate_kernel_spec(d['kernel_spec']); print('validators: ok')"`:
+    passed.
+  - `conda run -n accl python -m pytest`: passed (`207 passed`).
+  - `conda run -n accl python main.py selftest`: passed.
+- `git branch --show-current`: `develop_jzy`.
 - `git status --short`: clean before Node 12 edits.
 - `git log -1 --oneline`: `8ef82d6 feat: add node11 migration context pack`.
 - Node 12 focused validation:
@@ -353,18 +443,20 @@ README.md、docs/roadmap.md，然后用 git status 确认工作区状态。
 
 ## Next Concrete Task
 
-Node 11 has been implemented and verified in the working tree. The next task should start at
-Node 12 in `AGENTS.md`, with Node 13 close behind for test-context quality.
+Node 13 is complete at the toolchain level: real-index upstream test planning, selected/deferred
+classification, independent-golden guards, kernel verification-marker checks, artifact/report
+threading, mock generation, and one user-run real-AI/no-write artifact generation have all been
+verified. The next task should start Node 14, but still avoid broad migration.
 
 Planned next-node sequence:
 
-1. Node 12: connect dependency closure to AI header rewriting so missing dependencies are migrated
-   leaf-first before an entry header.
-2. Node 13: upgrade AI test migration to use real upstream test mappings and explicit
-   applicable/deferred test classification.
-3. Node 14: run the first dependency-aware AI-driven real algorithm batch. Current Node 10 planning
+1. Node 14: run the first dependency-aware AI-driven real algorithm batch. Current Node 10 planning
    recommends beginning with `all_of`, `any_of`, `find_if`, and `none_of`, then reassessing nearby
    candidates. Defer `find`, `count`, and `count_if` until their larger dependency gaps are reduced.
+2. Node 15: migrate only the minimal iterator/range support exposed by Node 14 failures and
+   dependency reports.
+3. Node 16: harden repair-loop classification using the failures observed from the first real
+   dependency-aware batch.
 
 Important constraints for the next session:
 

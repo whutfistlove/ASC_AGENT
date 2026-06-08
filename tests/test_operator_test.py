@@ -213,6 +213,25 @@ def test_kernel_run_test_sh_validates_cannsim_log(tmp_path):
     assert "verification passed" in sh
 
 
+def test_kernel_pass_detection_requires_verification_marker(tmp_path):
+    """Node 13: Python 侧也必须看到真实 verification marker，不只看 PASS 文本。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    log = cfg.output_dir / "kernel.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(OperatorTestRunner.KERNEL_PASS_MARKER + "\n", encoding="utf-8")
+    assert runner._kernel_run_test_passed(True, str(log)) is False
+
+    log.write_text(
+        OperatorTestRunner.KERNEL_VERIFY_MARKER + "\n"
+        + OperatorTestRunner.KERNEL_PASS_MARKER
+        + "\n",
+        encoding="utf-8",
+    )
+    assert runner._kernel_run_test_passed(True, str(log)) is True
+
+
 def test_prepare_tests_refreshes_existing_kernel_run_script(tmp_path):
     """run_test.sh 是生成脚本；环境片段更新后必须覆盖旧脚本。"""
     cfg = _make_config(tmp_path)

@@ -17,6 +17,7 @@ from core.failure_triage import classify_failure
 from core.operator_kernel_scaffold import (
     KERNEL_PASS_MARKER,
     KERNEL_SOC_VERSION,
+    KERNEL_VERIFY_MARKER,
     KernelScaffoldBuilder,
 )
 from core.utils import save_text
@@ -225,6 +226,7 @@ class OperatorTestRunner:
 
     KERNEL_SOC_VERSION = KERNEL_SOC_VERSION
     KERNEL_PASS_MARKER = KERNEL_PASS_MARKER
+    KERNEL_VERIFY_MARKER = KERNEL_VERIFY_MARKER
 
     # 以下若干 _kernel_* 仅是对 KernelScaffoldBuilder 的薄封装，供 prepare_tests 使用，
     # 把"脚手架内容"集中由 KernelScaffoldBuilder 负责，本类只管落盘与执行。
@@ -458,7 +460,7 @@ class OperatorTestRunner:
 
     @classmethod
     def _kernel_run_test_passed(cls, returncode_ok: bool, log_path: str) -> bool:
-        """run_test 模式的真实判定：退出码为 0 + 命中 PASS 标记 + 无失败特征。"""
+        """run_test 判定：退出码 + PASS + cannsim verification marker + 无失败特征。"""
         if not returncode_ok:
             return False
         try:
@@ -466,6 +468,8 @@ class OperatorTestRunner:
         except OSError:
             return False
         if cls.KERNEL_PASS_MARKER not in text:
+            return False
+        if cls.KERNEL_VERIFY_MARKER not in text:
             return False
         return not any(sig in text for sig in cls._KERNEL_FAILURE_SIGNATURES)
 

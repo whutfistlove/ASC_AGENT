@@ -73,6 +73,7 @@ def run_test_sh(algo: str, cannsim_soc_version: str = KERNEL_CANNSIM_SOC_VERSION
         "    exit 1\n"
         "fi\n"
         f'if grep -qF "{KERNEL_VERIFY_MARKER}" "$SIM_LOG"; then\n'
+        f'    echo "{KERNEL_VERIFY_MARKER}"\n'
         f'    echo "{KERNEL_PASS_MARKER}"\n'
         f'elif grep -qF "{KERNEL_SMOKE_MARKER}" "$SIM_LOG"; then\n'
         '    echo "KERNEL_SIM_RESULT: SMOKE (no kernel_spec; semantic golden check skipped)"\n'

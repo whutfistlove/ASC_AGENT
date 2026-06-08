@@ -40,6 +40,7 @@ from core.migration_context import (
 from core.migration_status import (
     build_migration_status_report,
     scan_migration_status,
+    target_relpath_for_header,
     write_migration_status_report,
 )
 from core.model_client import MockModelClient, build_model_client
@@ -49,7 +50,12 @@ from core.pipeline import FakeVerifier, Pipeline, RunResult
 from core.repo_verify import RepoVerifier
 from core.sample_revalidation import build_sample_revalidation_report, write_sample_revalidation_report
 from core.test_index import scan_test_index, write_test_index_report
-from core.test_migrator import migrate_operator_tests
+from core.test_migrator import (
+    default_test_plan_filename,
+    migrate_operator_tests,
+    plan_upstream_tests_for_header,
+    write_upstream_test_plan_report,
+)
 from core.utils import save_text
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -163,6 +169,18 @@ def _host_test_file_for(config: Config, target_relpath: str) -> Path:
     )
 
 
+def _infer_real_cccl_root_and_entry_header(input_path: Path) -> tuple[Path, str] | None:
+    """Infer CCCL root and cuda/std-relative header from a real libcudacxx path."""
+    marker = "libcudacxx/include/cuda/std/"
+    path_text = str(input_path.resolve()).replace("\\", "/")
+    if marker not in path_text:
+        return None
+    root_text, entry_header = path_text.split(marker, 1)
+    if not entry_header:
+        return None
+    return Path(root_text.rstrip("/")), entry_header
+
+
 def _maybe_migrate_tests(
     args,
     config: Config,
@@ -181,6 +199,17 @@ def _maybe_migrate_tests(
         return None
     if model_client is None or not input_path:
         return None
+    test_index = None
+    entry_header = ""
+    inferred = _infer_real_cccl_root_and_entry_header(Path(input_path))
+    if inferred is not None:
+        cccl_root, entry_header = inferred
+        try:
+            test_index = scan_test_index(cccl_root)
+        except Exception as exc:
+            if verbose:
+                print(f"[test-migrate] real test-index 扫描失败（{type(exc).__name__}: {exc}），使用 legacy 测试路径。")
+    legacy_test_text = ""
     try:
         cccl_test_path = Path(
             map_cccl_test_path(
@@ -191,10 +220,13 @@ def _maybe_migrate_tests(
             )
         )
     except ValueError:
-        return None
-    if not cccl_test_path.exists():
+        cccl_test_path = None
+    if cccl_test_path and cccl_test_path.exists():
+        legacy_test_text = cccl_test_path.read_text(encoding="utf-8")
+    elif test_index is None:
         if verbose:
-            print(f"[test-migrate] 未找到 CCCL 侧测试 {cccl_test_path}，回退内置模板。")
+            missing = cccl_test_path or "<unmapped>"
+            print(f"[test-migrate] 未找到 CCCL 侧测试 {missing}，回退内置模板。")
         return None
     accl_header = Path(config.target_repo) / target_relpath
     if not accl_header.exists():
@@ -213,7 +245,9 @@ def _maybe_migrate_tests(
             target_relpath=target_relpath,
             cccl_header_text=Path(input_path).read_text(encoding="utf-8"),
             accl_header_text=accl_header.read_text(encoding="utf-8"),
-            cccl_test_text=cccl_test_path.read_text(encoding="utf-8"),
+            cccl_test_text=legacy_test_text,
+            test_index=test_index,
+            entry_header=entry_header,
             verbose=verbose,
             show_model_io=getattr(args, "show_model_io", False),
             toolbox=_maybe_build_toolbox(config),  # 生成期取证/自检（默认关闭→None）
@@ -223,7 +257,15 @@ def _maybe_migrate_tests(
         if verbose:
             print(f"[test-migrate] 迁移失败（{type(exc).__name__}: {exc}），回退内置模板。")
         return None
-    return {"host_test_code": artifacts.host_test_code, "kernel_spec": artifacts.kernel_spec}
+    return {
+        "host_test_code": artifacts.host_test_code,
+        "kernel_spec": artifacts.kernel_spec,
+        "upstream_test_plan": (
+            artifacts.upstream_test_plan.to_dict()
+            if artifacts.upstream_test_plan is not None
+            else None
+        ),
+    }
 
 
 def _run_operator_tests(
@@ -263,7 +305,10 @@ def _run_operator_tests(
         host_test_code=artifacts.get("host_test_code"),
         kernel_spec=artifacts.get("kernel_spec"),
     )
-    return tr.to_dict()
+    result = tr.to_dict()
+    if artifacts.get("upstream_test_plan") is not None:
+        result["test_migration_plan"] = artifacts["upstream_test_plan"]
+    return result
 
 
 def _tests_all_passed(test_result: dict, run_host: bool, run_kernel: bool, test_dry_run: bool = False) -> bool:
@@ -897,6 +942,168 @@ def cmd_test_index(args) -> int:
     return 0
 
 
+def cmd_test_plan(args) -> int:
+    """Write a Node 13 selected/deferred upstream test plan for one header."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    inventory = scan_header_inventory(args.cccl_repo)
+    test_index = scan_test_index(args.cccl_repo)
+    dep_graph = scan_dependency_graph(args.cccl_repo)
+    status_report = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
+    plan = plan_upstream_tests_for_header(
+        test_index,
+        entry_header=args.entry_header,
+        dependency_status_by_header=status_by_header,
+        scaffold_inexpressible_tests=set(args.scaffold_inexpressible or []),
+        max_selected_tests=args.max_selected_tests,
+    )
+    output = args.output or default_test_plan_filename(args.entry_header)
+    report_path = write_upstream_test_plan_report(plan, config.output_dir, filename=output)
+    summary = plan.summary()
+    print("== Node 13 upstream test migration plan ==")
+    print(f"entry_header: {plan.entry_header}")
+    print(f"selected_tests: {summary['selected_count']}")
+    print(f"deferred_tests: {summary['deferred_count']}")
+    print("deferred_reason_counts:")
+    for reason, count in summary["deferred_reason_counts"].items():
+        print(f"  {reason}: {count}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def _mock_test_migration_payload(include_path: str) -> dict:
+    """Small valid test-migration payload for offline `test-migrate --mock` smoke runs."""
+    return {
+        "host_test_code": (
+            f'#include "{include_path}"\n'
+            "static int g_failures = 0;\n"
+            "int main(){ return g_failures == 0 ? 0 : 1; }\n"
+        ),
+        "kernel_spec": {
+            "dtype": "float",
+            "gm_inputs": 2,
+            "gm_outputs": 1,
+            "input_init": "h_x[i] = static_cast<float>(i); h_y[i] = static_cast<float>(i + 1);",
+            "element_op_code": "z_val = x_val;",
+            "golden_code": "expected = x_ref;",
+        },
+        "notes": "mock test migration payload; validates orchestration only",
+    }
+
+
+def _write_test_migration_artifact_report(
+    config: Config,
+    artifacts,
+    *,
+    output: str,
+) -> Path:
+    name = Path(output)
+    if name.is_absolute() or len(name.parts) != 1:
+        raise ValueError("test migration artifact filename must be a file name under outputs/")
+    payload = {
+        "algo_name": artifacts.algo_name,
+        "host_test_code": artifacts.host_test_code,
+        "kernel_spec": artifacts.kernel_spec,
+        "notes": artifacts.notes,
+        "upstream_test_plan": (
+            artifacts.upstream_test_plan.to_dict()
+            if artifacts.upstream_test_plan is not None
+            else None
+        ),
+    }
+    path = config.output_dir / name
+    save_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def cmd_test_migrate(args) -> int:
+    """Generate Node 13 AI test artifacts for one header without writing/running tests."""
+    if args.mock and args.real_ai:
+        print("error: --mock and --real-ai are mutually exclusive", file=sys.stderr)
+        return 2
+    if not (args.mock or args.real_ai):
+        print("error: choose --mock or --real-ai explicitly", file=sys.stderr)
+        return 2
+
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    overrides = {"model": {"provider": "mock"}} if args.mock else None
+    config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
+
+    inventory = scan_header_inventory(args.cccl_repo)
+    test_index = scan_test_index(args.cccl_repo)
+    dep_graph = scan_dependency_graph(args.cccl_repo)
+    status_report = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
+
+    source_path = Path(inventory.header_root) / args.entry_header
+    if not source_path.exists():
+        print(f"error: source header not found: {source_path}", file=sys.stderr)
+        return 2
+    target_relpath = target_relpath_for_header(
+        args.entry_header,
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    target_path = Path(config.target_repo) / target_relpath
+    if not target_path.exists():
+        print(f"error: ACCL target header not found: {target_path}", file=sys.stderr)
+        return 2
+    include_path = OperatorTestRunner.include_path_from_target_relpath(target_relpath)
+    algo_name = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
+
+    model_client = (
+        MockModelClient(responses=[json.dumps(_mock_test_migration_payload(include_path))])
+        if args.mock
+        else build_model_client(config)
+    )
+    artifacts = migrate_operator_tests(
+        config,
+        model_client,
+        algo_name=algo_name,
+        include_path=include_path,
+        target_relpath=target_relpath,
+        cccl_header_text=source_path.read_text(encoding="utf-8", errors="replace"),
+        accl_header_text=target_path.read_text(encoding="utf-8", errors="replace"),
+        cccl_test_text="",
+        test_index=test_index,
+        entry_header=args.entry_header,
+        dependency_status_by_header=status_by_header,
+        scaffold_inexpressible_tests=set(args.scaffold_inexpressible or []),
+        verbose=not args.quiet,
+        show_model_io=getattr(args, "show_model_io", False),
+        toolbox=None if args.mock else _maybe_build_toolbox(config),
+        max_tool_rounds=config.model_max_tool_rounds,
+    )
+    report_path = _write_test_migration_artifact_report(config, artifacts, output=args.output)
+    plan_summary = artifacts.upstream_test_plan.summary() if artifacts.upstream_test_plan else {}
+    print("== Node 13 AI test migration artifacts ==")
+    print(f"entry_header: {args.entry_header}")
+    print(f"mode: {'mock' if args.mock else 'real_ai'}")
+    print(f"selected_tests: {plan_summary.get('selected_count', 0)}")
+    print(f"deferred_tests: {plan_summary.get('deferred_count', 0)}")
+    print(f"has_host: {artifacts.has_host()}")
+    print(f"has_kernel: {artifacts.has_kernel()}")
+    print(f"report: {report_path}")
+    return 0
+
+
 def cmd_dep_graph(args) -> int:
     """Scan CCCL headers and write a deterministic include dependency graph report."""
     settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
@@ -1198,6 +1405,71 @@ def build_parser() -> argparse.ArgumentParser:
         help="写入 outputs/ 下的报告文件名",
     )
     p_test_index.set_defaults(func=cmd_test_index)
+
+    p_test_plan = sub.add_parser(
+        "test-plan",
+        help="Node 13：为一个 CCCL header 生成 selected/deferred 上游测试迁移计划",
+    )
+    p_test_plan.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __numeric/midpoint.h",
+    )
+    p_test_plan.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_test_plan.add_argument(
+        "--max-selected-tests",
+        type=int,
+        default=4,
+        help="最多选入 prompt 的 mapped .pass.cpp 数量",
+    )
+    p_test_plan.add_argument(
+        "--scaffold-inexpressible",
+        action="append",
+        default=[],
+        help="显式标记为当前 kernel scaffold 不可表达的上游测试相对路径；可重复",
+    )
+    p_test_plan.add_argument(
+        "--output",
+        help="写入 outputs/ 下的报告文件名；默认按 entry header 自动生成",
+    )
+    p_test_plan.set_defaults(func=cmd_test_plan)
+
+    p_test_migrate = sub.add_parser(
+        "test-migrate",
+        help="Node 13：为一个已迁移 ACCL header 生成 AI host/kernel 测试 artifacts（不写测试、不运行）",
+    )
+    p_test_migrate.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __algorithm/max.h",
+    )
+    p_test_migrate.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_test_migrate.add_argument("--mock", action="store_true", help="使用 mock 模型生成测试 artifacts")
+    p_test_migrate.add_argument("--real-ai", action="store_true", help="显式允许真实模型/API 调用")
+    p_test_migrate.add_argument(
+        "--scaffold-inexpressible",
+        action="append",
+        default=[],
+        help="显式标记为当前 kernel scaffold 不可表达的上游测试相对路径；可重复",
+    )
+    p_test_migrate.add_argument(
+        "--output",
+        default="test_migration_artifacts.json",
+        help="写入 outputs/ 下的 artifacts 报告文件名",
+    )
+    p_test_migrate.add_argument("--quiet", action="store_true", help="减少日志输出")
+    p_test_migrate.add_argument(
+        "--show-model-io",
+        action="store_true",
+        help="真实模型调用时打印与模型的完整对话",
+    )
+    p_test_migrate.set_defaults(func=cmd_test_migrate)
 
     p_dep_graph = sub.add_parser(
         "dep-graph",
