@@ -4,7 +4,7 @@ ASC_agent 是一个面向 **CCCL 到 ACCL** 的迁移与验证助手。它以
 `libcudacxx` 头文件为输入，生成对应的 `libascendcxx` 头文件，并可以继续迁移
 算子测试，在 host 侧和 AscendC kernel 仿真侧验证结果。
 
-当前仓库目录名仍是 `cccl-to-accl-v3`，但项目名称统一为 **ASC_agent**。
+项目名称统一为 **ASC_agent**。
 
 ## 项目能做什么
 
