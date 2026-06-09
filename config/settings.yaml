@@ -56,7 +56,7 @@ few_shot:
 repo_verify:
   # 留空则自动探测 conda.sh；也可显式写绝对路径
   conda_sh: "${CONDA_SH:-}"
-  conda_env: asc_cccl_env
+  conda_env: accl
   clang_format_bin: clang-format    # 不再写死 clang-format-14
   push_remote: origin
   base_branch: develop
@@ -76,6 +76,11 @@ repo_verify:
 
 retry:
   max_fix_rounds: 5
+
+tests:
+  # Match the CANN 9.0.0-alpha.1 setup validated in /home/zhenyu/projects/mylearn.
+  kernel_soc_version: Ascend910_9599
+  kernel_cannsim_soc_version: Ascend950
 
 examples:
   example_1:

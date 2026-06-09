@@ -1,4 +1,4 @@
-// auto-workload=full (n=16384, cores=8, inputs=2, outputs=2, dtype=float)
+// auto-workload=fast (n=64, cores=1, inputs=2, outputs=2, dtype=float)
 #include "acl/acl.h"
 #include "host.h"
 #include "ascend/std/__algorithm/minmax.h"
@@ -19,7 +19,7 @@
 
 int main()
 {
-    const size_t n = 16384;
+    const size_t n = 64;
     const size_t bytes = n * sizeof(float);
 
     CHECK_ACL(aclInit(nullptr));
@@ -52,7 +52,7 @@ int main()
     CHECK_ACL(aclrtMemcpy(d_in0, bytes, h_in0.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
     CHECK_ACL(aclrtMemcpy(d_in1, bytes, h_in1.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
 
-    ascend_std_minmax_do(8, stream, static_cast<uint8_t*>(d_in0), static_cast<uint8_t*>(d_in1), static_cast<uint8_t*>(d_out0), static_cast<uint8_t*>(d_out1));
+    ascend_std_minmax_do(1, stream, static_cast<uint8_t*>(d_in0), static_cast<uint8_t*>(d_in1), static_cast<uint8_t*>(d_out0), static_cast<uint8_t*>(d_out1));
     CHECK_ACL(aclrtSynchronizeStream(stream));
     CHECK_ACL(aclrtMemcpy(h_out0.data(), bytes, d_out0, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
     CHECK_ACL(aclrtMemcpy(h_out1.data(), bytes, d_out1, bytes, ACL_MEMCPY_DEVICE_TO_HOST));

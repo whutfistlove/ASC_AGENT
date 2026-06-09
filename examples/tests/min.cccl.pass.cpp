@@ -4,40 +4,55 @@
 // under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES.
 //
 //===----------------------------------------------------------------------===//
 
-// Reference test for cuda::std::min (see __algorithm/min.h).
-//
-// Semantics (ground truth for migration):
-//   min(a, b)        -> the smaller of a, b under operator<; if equal, returns a.
-//   min(a, b, comp)  -> the smaller under comp; if equal, returns a.
-// The result is returned by const reference (no copy, no mutation of inputs).
+// <algorithm>
 
-#include <cuda/std/__algorithm/min.h>
-#include <cassert>
+// template<LessThanComparable T>
+//   const T&
+//   min(const T& a, const T& b);
+
+#include <cuda/std/algorithm>
+#include <cuda/std/cassert>
+
+#include "test_macros.h"
+
+template <class T>
+__host__ __device__ constexpr void test(const T& a, const T& b, const T& x)
+{
+  assert(&cuda::std::min(a, b) == &x);
+}
+
+__host__ __device__ constexpr bool test()
+{
+  {
+    int x = 0;
+    int y = 0;
+    test(x, y, x);
+    test(y, x, y);
+  }
+  {
+    int x = 0;
+    int y = 1;
+    test(x, y, x);
+    test(y, x, x);
+  }
+  {
+    int x = 1;
+    int y = 0;
+    test(x, y, y);
+    test(y, x, y);
+  }
+
+  return true;
+}
 
 int main(int, char**)
 {
-  // Basic ordering on integers and floats.
-  assert(cuda::std::min(1, 2) == 1);
-  assert(cuda::std::min(2, 1) == 1);
-  assert(cuda::std::min(5.0f, 3.0f) == 3.0f);
-  assert(cuda::std::min(-4, -9) == -9);
-
-  // Equal values: the first argument is returned (by reference).
-  {
-    int a = 7;
-    int b = 7;
-    assert(&cuda::std::min(a, b) == &a);
-  }
-
-  // Custom comparator (plain operator< wrapped in a lambda).
-  {
-    auto comp = [](int x, int y) { return x < y; };
-    assert(cuda::std::min(10, 20, comp) == 10);
-    assert(cuda::std::min(20, 10, comp) == 10);
-  }
+  test();
+  static_assert(test(), "");
 
   return 0;
 }

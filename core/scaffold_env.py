@@ -19,8 +19,8 @@ def env_setup_block() -> str:
     return (
         "# ---- 统一环境准备（core/scaffold_env.py 生成，host/kernel 共用）----\n"
         'if command -v conda >/dev/null 2>&1; then\n'
-        '    source activate "${ASC_CONDA_ENV:-asc_cccl_env}" 2>/dev/null \\\n'
-        '        || conda activate "${ASC_CONDA_ENV:-asc_cccl_env}" 2>/dev/null || true\n'
+        '    source activate "${ASC_CONDA_ENV:-accl}" 2>/dev/null \\\n'
+        '        || conda activate "${ASC_CONDA_ENV:-accl}" 2>/dev/null || true\n'
         "fi\n"
         "# ASCEND_HOME_PATH 可能由父进程预置，但 PATH/LD_LIBRARY_PATH 仍未完整\n"
         "# 初始化；因此这里总是优先 source 官方 set_env.sh（幂等）。\n"

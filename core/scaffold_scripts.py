@@ -27,7 +27,7 @@ def stale_cache_guard(build_var: str = "BUILD_DIR") -> str:
     )
 
 
-def run_test_sh(algo: str) -> str:
+def run_test_sh(algo: str, cannsim_soc_version: str = KERNEL_CANNSIM_SOC_VERSION) -> str:
     """kernel 仿真脚本：环境准备 + 构建 + cannsim 录制 + 基于 cannsim.log 的真实判定。"""
     return (
         "#!/bin/bash\n"
@@ -56,7 +56,7 @@ def run_test_sh(algo: str) -> str:
         '    echo "ERROR: cannsim command not found. Please install/enable the CANN simulator."\n'
         "    exit 1\n"
         "fi\n\n"
-        f"cannsim record ./ascendc_kernels_bbit -s {KERNEL_CANNSIM_SOC_VERSION} --gen-report \\\n"
+        f"cannsim record ./ascendc_kernels_bbit -s {cannsim_soc_version} --gen-report \\\n"
         '    || { echo "ERROR: cannsim simulation failed"; exit 1; }\n\n'
         f'echo "kernel simulation for {algo} finished."\n\n'
         "# cannsim 把被测程序的 stdout 重定向到 build/cannsim_*/cannsim.log。\n"
@@ -73,6 +73,7 @@ def run_test_sh(algo: str) -> str:
         "    exit 1\n"
         "fi\n"
         f'if grep -qF "{KERNEL_VERIFY_MARKER}" "$SIM_LOG"; then\n'
+        f'    echo "{KERNEL_VERIFY_MARKER}"\n'
         f'    echo "{KERNEL_PASS_MARKER}"\n'
         f'elif grep -qF "{KERNEL_SMOKE_MARKER}" "$SIM_LOG"; then\n'
         '    echo "KERNEL_SIM_RESULT: SMOKE (no kernel_spec; semantic golden check skipped)"\n'

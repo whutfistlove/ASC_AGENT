@@ -2,19 +2,13 @@
 #define LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_MINMAX_H_
 
 #include "ascend/std/__config"
+#include "ascend/std/__utility/pair.h"
 
 #if defined(__CCE__)
 #define ASCEND_DEVICE_CODE
 #endif
 
 _ASCEND_STD_BEGIN
-
-template <typename _T1, typename _T2>
-struct pair {
-    _T1 first;
-    _T2 second;
-    _ASCEND_AICORE_FN constexpr pair(const _T1& __x, const _T2& __y) : first(__x), second(__y) {}
-};
 
 // Returns {min, max} as a pair of const references. If __a and __b are
 // equivalent, the pair is {__a, __b} (i.e. ties keep the original order).

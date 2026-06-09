@@ -1,7 +1,8 @@
 {
-  "gm_inputs": 2,
   "input_init": "h_x[i] = static_cast<float>(i % 97) - 40.0f; h_y[i] = static_cast<float>((i * 3) % 97) - 50.0f;",
   "element_op_code": "z_val = ascend::std::max(x_val, y_val);",
   "golden_code": "expected = (x_ref < y_ref) ? y_ref : x_ref;",
-  "notes": "Binary value-returning op. The element-wise kernel computes z = max(x, y); the golden recomputes the greater of the two with a plain ternary (no ascend::std), so the check is independent."
+  "gm_inputs": 2,
+  "gm_outputs": 1,
+  "dtype": "float"
 }

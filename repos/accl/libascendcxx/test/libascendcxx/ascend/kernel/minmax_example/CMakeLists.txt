@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(Ascend_c)
 
-set(SOC_VERSION "Ascend950PR_9599" CACHE STRING "system on chip type")
+set(SOC_VERSION "Ascend910_9599" CACHE STRING "system on chip type")
 set(ASCEND_CANN_PACKAGE_PATH $ENV{ASCEND_HOME_PATH}
     CACHE STRING "ASCEND CANN package installation directory"
 )

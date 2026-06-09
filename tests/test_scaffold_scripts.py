@@ -44,6 +44,11 @@ def test_kernel_run_test_preserves_pass_judgment():
     assert "Mismatch at" in sh
 
 
+def test_kernel_run_test_uses_configurable_cannsim_soc():
+    sh = K.run_test_sh("sort3", cannsim_soc_version="AscendCustom")
+    assert "cannsim record ./ascendc_kernels_bbit -s AscendCustom" in sh
+
+
 def test_scripts_have_shebang_and_set_e():
     for sh in (K.run_test_sh("a"), K.host_run_test_sh("a"), K.full_project_run_sh("a")):
         assert sh.startswith("#!/bin/bash")

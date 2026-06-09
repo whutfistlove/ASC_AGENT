@@ -2,6 +2,5 @@
   "input_init": "h_x[i] = static_cast<float>(i % 200) - 50.0f;",
   "element_op_code": "z_val = ascend::std::clamp(x_val, 10.0f, 100.0f);",
   "golden_code": "expected = (x_ref < 10.0f) ? 10.0f : (x_ref > 100.0f ? 100.0f : x_ref);",
-  "gm_inputs": 1,
-  "gm_outputs": 1
+  "gm_inputs": 1
 }

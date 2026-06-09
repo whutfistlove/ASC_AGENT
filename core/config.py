@@ -79,7 +79,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "repo_verify": {
         "conda_sh": "",               # 留空则自动探测
-        "conda_env": "asc_cccl_env",
+        "conda_env": "accl",
         "clang_format_bin": "clang-format",   # 不再写死 clang-format-14
         "push_remote": "origin",
         "base_branch": "develop",
@@ -108,6 +108,8 @@ DEFAULTS: dict[str, Any] = {
         # 默认给足超时，避免被调用方误杀（历史上 540s 就被 timeout 杀过）。
         "kernel_timeout_sec": 1200,
         "host_timeout_sec": 600,
+        "kernel_soc_version": "Ascend950PR_9599",
+        "kernel_cannsim_soc_version": "Ascend950",
         # 快速档：把 kernel 仿真 workload 从 8×2048 降到 1 核 1 tile(64 元素)，
         # camodel 数十秒即可跑完，适合 CI/冒烟。默认关闭；最终验证用完整档。
         "fast_kernel": False,
@@ -328,6 +330,14 @@ class Config:
     @property
     def fast_kernel(self) -> bool:
         return bool(self.raw.get("tests", {}).get("fast_kernel", False))
+
+    @property
+    def kernel_soc_version(self) -> str:
+        return str(self.raw.get("tests", {}).get("kernel_soc_version", "Ascend950PR_9599"))
+
+    @property
+    def kernel_cannsim_soc_version(self) -> str:
+        return str(self.raw.get("tests", {}).get("kernel_cannsim_soc_version", "Ascend950"))
 
     @property
     def source_repo_prefix(self) -> str:

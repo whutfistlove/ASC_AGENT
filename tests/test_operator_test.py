@@ -213,6 +213,25 @@ def test_kernel_run_test_sh_validates_cannsim_log(tmp_path):
     assert "verification passed" in sh
 
 
+def test_kernel_pass_detection_requires_verification_marker(tmp_path):
+    """Node 13: Python 侧也必须看到真实 verification marker，不只看 PASS 文本。"""
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    log = cfg.output_dir / "kernel.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(OperatorTestRunner.KERNEL_PASS_MARKER + "\n", encoding="utf-8")
+    assert runner._kernel_run_test_passed(True, str(log)) is False
+
+    log.write_text(
+        OperatorTestRunner.KERNEL_VERIFY_MARKER + "\n"
+        + OperatorTestRunner.KERNEL_PASS_MARKER
+        + "\n",
+        encoding="utf-8",
+    )
+    assert runner._kernel_run_test_passed(True, str(log)) is True
+
+
 def test_prepare_tests_refreshes_existing_kernel_run_script(tmp_path):
     """run_test.sh 是生成脚本；环境片段更新后必须覆盖旧脚本。"""
     cfg = _make_config(tmp_path)
@@ -246,6 +265,20 @@ def test_prepare_tests_refreshes_existing_kernel_cmakelists(tmp_path):
     text = cmake_lists.read_text(encoding="utf-8")
     assert "stale cmake" not in text
     assert "--allow-shlib-undefined" in text
+
+
+def test_prepare_tests_uses_configured_kernel_soc_versions(tmp_path):
+    cfg = _make_config(tmp_path)
+    cfg.raw.setdefault("tests", {})["kernel_soc_version"] = "Ascend910_9599"
+    cfg.raw.setdefault("tests", {})["kernel_cannsim_soc_version"] = "Ascend950"
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    res = runner.prepare_tests("libascendcxx/include/ascend/std/__algorithm/max.h")
+
+    cmake_text = Path(res.kernel_test_dir, "CMakeLists.txt").read_text(encoding="utf-8")
+    run_text = Path(res.kernel_test_dir, "run_test.sh").read_text(encoding="utf-8")
+    assert 'set(SOC_VERSION "Ascend910_9599"' in cmake_text
+    assert "cannsim record ./ascendc_kernels_bbit -s Ascend950" in run_text
 
 
 # --------------------------------------------------------------------------- #

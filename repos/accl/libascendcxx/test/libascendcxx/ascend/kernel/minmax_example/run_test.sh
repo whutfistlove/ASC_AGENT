@@ -3,8 +3,8 @@
 
 # ---- 统一环境准备（core/scaffold_env.py 生成，host/kernel 共用）----
 if command -v conda >/dev/null 2>&1; then
-    source activate "${ASC_CONDA_ENV:-asc_cccl_env}" 2>/dev/null \
-        || conda activate "${ASC_CONDA_ENV:-asc_cccl_env}" 2>/dev/null || true
+    source activate "${ASC_CONDA_ENV:-accl}" 2>/dev/null \
+        || conda activate "${ASC_CONDA_ENV:-accl}" 2>/dev/null || true
 fi
 # ASCEND_HOME_PATH 可能由父进程预置，但 PATH/LD_LIBRARY_PATH 仍未完整
 # 初始化；因此这里总是优先 source 官方 set_env.sh（幂等）。

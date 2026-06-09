@@ -64,7 +64,11 @@
 
 // Disable exceptions in device code (optional but common)
 #ifndef _ASCEND_STD_NO_EXCEPTIONS
+#if defined(_ACCL_STD_NO_EXCEPTIONS)
+#define _ASCEND_STD_NO_EXCEPTIONS _ACCL_STD_NO_EXCEPTIONS
+#else
 #define _ASCEND_STD_NO_EXCEPTIONS 1
+#endif
 #endif
 
 // Namespace alias
@@ -77,5 +81,56 @@
 #define _ASCEND_STD_END \
     }                   \
     }
+
+// ACCL compatibility aliases.
+//
+// _ASCEND_* remains the canonical spelling for target namespace and AscendC
+// execution annotations. _ACCL_* aliases are provided so migrated CCCL support
+// headers can use an ACCL-prefixed configuration surface without forcing a
+// mechanical rewrite of existing target headers.
+#if defined(_ASCEND_COMPILER_CCE) && !defined(_ACCL_COMPILER_CCE)
+#define _ACCL_COMPILER_CCE
+#endif
+#if defined(_ASCEND_COMPILER_CLANG) && !defined(_ACCL_COMPILER_CLANG)
+#define _ACCL_COMPILER_CLANG
+#endif
+#if defined(_ASCEND_COMPILER_GCC) && !defined(_ACCL_COMPILER_GCC)
+#define _ACCL_COMPILER_GCC
+#endif
+#if defined(_ASCEND_COMPILER_MSVC) && !defined(_ACCL_COMPILER_MSVC)
+#define _ACCL_COMPILER_MSVC
+#endif
+
+#if defined(_ASCEND_PLATFORM) && !defined(_ACCL_PLATFORM)
+#define _ACCL_PLATFORM _ASCEND_PLATFORM
+#endif
+
+#ifndef _ACCL_HOST_DEVICE
+#define _ACCL_HOST_DEVICE _ASCEND_HOST_DEVICE
+#endif
+
+#ifndef _ACCL_AICORE_FN
+#define _ACCL_AICORE_FN _ASCEND_AICORE_FN
+#endif
+
+#ifndef _ACCL_AIV_FN
+#define _ACCL_AIV_FN _ASCEND_AIV_FN
+#endif
+
+#ifndef _ACCL_STD_NO_EXCEPTIONS
+#define _ACCL_STD_NO_EXCEPTIONS _ASCEND_STD_NO_EXCEPTIONS
+#endif
+
+#ifndef _ACCL_STD
+#define _ACCL_STD _ASCEND_STD
+#endif
+
+#ifndef _ACCL_STD_BEGIN
+#define _ACCL_STD_BEGIN _ASCEND_STD_BEGIN
+#endif
+
+#ifndef _ACCL_STD_END
+#define _ACCL_STD_END _ASCEND_STD_END
+#endif
 
 #endif // ASCEND_STD___CONFIG

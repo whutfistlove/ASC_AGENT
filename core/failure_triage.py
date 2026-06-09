@@ -53,6 +53,8 @@ _ENV_SIGNATURES = (
     "symbol lookup error",  # CANN runtime picked an incompatible shared library copy
     "undefined symbol: _ZNK2ge12AscendString",
     "undefined symbol: _ZN2ge9GetTypeId",
+    "SOC_VERSION",
+    "does not support, the support list is",
     "未找到 bash",
     "未找到 Ascend 环境脚本",
     "CMake Error: The current CMakeCache",

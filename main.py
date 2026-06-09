@@ -5,6 +5,7 @@
     run      迁移单个 CCCL 文件，含 git 提交检查与多轮修复（真实或 --mock）
     batch    按清单批量迁移并产出汇总报告（工具链 + 测试能力的核心）
     test     为指定算子生成并执行 host/kernel 测试
+    dependency-convert  按依赖闭包 leaf-first 迁移一个 header（Node 12）
     selftest 用内置示例做一次离线冒烟（mock，无需仓库/网络）
 
 用法：
@@ -12,6 +13,7 @@
     python main.py run     --input <CCCL 文件路径> [--mock] [--dry-run]
     python main.py batch   --manifest <manifest.yaml> [--mock] [--quiet]
     python main.py test    --input <CCCL 文件路径> [--host-only | --kernel-only]
+    python main.py dependency-convert --entry-header __algorithm/all_of.h --plan-only
     python main.py selftest
 """
 
@@ -26,18 +28,59 @@ import yaml
 
 from core.agent_tools import build_toolbox, distill_error_lines
 from core.config import Config
+from core.dep_graph import scan_dependency_graph, write_dependency_graph_report
 from core.example_promote import discover_promotable, promote_operator
 from core.fix_once import run_single_fix_from_test_feedback, run_test_artifact_fix
+from core.inventory import scan_header_inventory, write_inventory_report
+from core.migration_context import (
+    build_migration_context_pack_from_scans,
+    default_context_pack_filename,
+    write_migration_context_pack,
+)
+from core.migration_status import (
+    build_migration_status_report,
+    scan_migration_status,
+    target_relpath_for_header,
+    write_migration_status_report,
+)
 from core.model_client import MockModelClient, build_model_client
 from core.operator_test import OperatorTestRunner
 from core.path_mapper import expected_guard_from_relpath, map_cccl_test_path, map_target_relpath
 from core.pipeline import FakeVerifier, Pipeline, RunResult
 from core.repo_verify import RepoVerifier
-from core.test_migrator import migrate_operator_tests
+from core.sample_revalidation import build_sample_revalidation_report, write_sample_revalidation_report
+from core.test_index import scan_test_index, write_test_index_report
+from core.test_migrator import (
+    default_test_plan_filename,
+    migrate_operator_tests,
+    plan_upstream_tests_for_header,
+    write_upstream_test_plan_report,
+)
 from core.utils import save_text
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_SETTINGS = PROJECT_ROOT / "config" / "settings.yaml"
+
+
+# --------------------------------------------------------------------------- #
+# CLI 摘要
+# --------------------------------------------------------------------------- #
+def _mode_label(*, plan_only: bool = False, mock: bool = False, real_ai: bool = False) -> str:
+    if plan_only:
+        return "plan_only (只规划；不调用模型；不写 ACCL)"
+    if mock:
+        return "mock (离线模拟模型；不调用真实 API)"
+    if real_ai:
+        return "real_ai (真实模型/API 调用)"
+    return "unknown"
+
+
+def _model_label(config: Config, *, plan_only: bool = False) -> str:
+    if plan_only:
+        return "none (plan_only)"
+    if config.model_provider == "mock":
+        return f"mock (无真实 API 调用；配置 model_name={config.model_name})"
+    return f"{config.model_provider}/{config.model_name}"
 
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +125,15 @@ def write_batch_report(config: Config, results: list[RunResult]) -> Path:
     }
     report_path = config.output_dir / "batch_report.json"
     save_text(report_path, json.dumps(report, ensure_ascii=False, indent=2))
+    return report_path
+
+
+def write_dependency_convert_report(config: Config, result, output: str) -> Path:
+    name = Path(output)
+    if name.is_absolute() or len(name.parts) != 1:
+        raise ValueError("dependency convert report filename must be a file name under outputs/")
+    report_path = config.output_dir / name
+    save_text(report_path, json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     return report_path
 
 
@@ -138,6 +190,18 @@ def _host_test_file_for(config: Config, target_relpath: str) -> Path:
     )
 
 
+def _infer_real_cccl_root_and_entry_header(input_path: Path) -> tuple[Path, str] | None:
+    """Infer CCCL root and cuda/std-relative header from a real libcudacxx path."""
+    marker = "libcudacxx/include/cuda/std/"
+    path_text = str(input_path.resolve()).replace("\\", "/")
+    if marker not in path_text:
+        return None
+    root_text, entry_header = path_text.split(marker, 1)
+    if not entry_header:
+        return None
+    return Path(root_text.rstrip("/")), entry_header
+
+
 def _maybe_migrate_tests(
     args,
     config: Config,
@@ -156,6 +220,17 @@ def _maybe_migrate_tests(
         return None
     if model_client is None or not input_path:
         return None
+    test_index = None
+    entry_header = ""
+    inferred = _infer_real_cccl_root_and_entry_header(Path(input_path))
+    if inferred is not None:
+        cccl_root, entry_header = inferred
+        try:
+            test_index = scan_test_index(cccl_root)
+        except Exception as exc:
+            if verbose:
+                print(f"[test-migrate] real test-index 扫描失败（{type(exc).__name__}: {exc}），使用 legacy 测试路径。")
+    legacy_test_text = ""
     try:
         cccl_test_path = Path(
             map_cccl_test_path(
@@ -166,10 +241,13 @@ def _maybe_migrate_tests(
             )
         )
     except ValueError:
-        return None
-    if not cccl_test_path.exists():
+        cccl_test_path = None
+    if cccl_test_path and cccl_test_path.exists():
+        legacy_test_text = cccl_test_path.read_text(encoding="utf-8")
+    elif test_index is None:
         if verbose:
-            print(f"[test-migrate] 未找到 CCCL 侧测试 {cccl_test_path}，回退内置模板。")
+            missing = cccl_test_path or "<unmapped>"
+            print(f"[test-migrate] 未找到 CCCL 侧测试 {missing}，回退内置模板。")
         return None
     accl_header = Path(config.target_repo) / target_relpath
     if not accl_header.exists():
@@ -188,7 +266,9 @@ def _maybe_migrate_tests(
             target_relpath=target_relpath,
             cccl_header_text=Path(input_path).read_text(encoding="utf-8"),
             accl_header_text=accl_header.read_text(encoding="utf-8"),
-            cccl_test_text=cccl_test_path.read_text(encoding="utf-8"),
+            cccl_test_text=legacy_test_text,
+            test_index=test_index,
+            entry_header=entry_header,
             verbose=verbose,
             show_model_io=getattr(args, "show_model_io", False),
             toolbox=_maybe_build_toolbox(config),  # 生成期取证/自检（默认关闭→None）
@@ -198,7 +278,15 @@ def _maybe_migrate_tests(
         if verbose:
             print(f"[test-migrate] 迁移失败（{type(exc).__name__}: {exc}），回退内置模板。")
         return None
-    return {"host_test_code": artifacts.host_test_code, "kernel_spec": artifacts.kernel_spec}
+    return {
+        "host_test_code": artifacts.host_test_code,
+        "kernel_spec": artifacts.kernel_spec,
+        "upstream_test_plan": (
+            artifacts.upstream_test_plan.to_dict()
+            if artifacts.upstream_test_plan is not None
+            else None
+        ),
+    }
 
 
 def _run_operator_tests(
@@ -238,7 +326,10 @@ def _run_operator_tests(
         host_test_code=artifacts.get("host_test_code"),
         kernel_spec=artifacts.get("kernel_spec"),
     )
-    return tr.to_dict()
+    result = tr.to_dict()
+    if artifacts.get("upstream_test_plan") is not None:
+        result["test_migration_plan"] = artifacts["upstream_test_plan"]
+    return result
 
 
 def _tests_all_passed(test_result: dict, run_host: bool, run_kernel: bool, test_dry_run: bool = False) -> bool:
@@ -838,6 +929,369 @@ def cmd_selftest(args) -> int:
     return cmd_batch(ns)
 
 
+def cmd_inventory(args) -> int:
+    """Scan real CCCL libcudacxx headers and write a deterministic JSON report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_header_inventory(args.cccl_repo)
+    report_path = write_inventory_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL header inventory ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"header_root: {report.header_root}")
+    print(f"headers: {summary['header_count']}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_test_index(args) -> int:
+    """Scan real CCCL libcudacxx tests and write a deterministic JSON report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_test_index(args.cccl_repo)
+    report_path = write_test_index_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL libcudacxx test index ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"test_root: {report.test_root}")
+    print(f"tests: {summary['test_count']}")
+    print(f"helper_headers: {summary['helper_header_count']}")
+    print(f"mapped_headers: {summary['mapped_header_count']}")
+    print(f"unmapped_headers: {summary['unmapped_header_count']}")
+    print(f"unmapped_tests: {summary['unmapped_test_count']}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_test_plan(args) -> int:
+    """Write a Node 13 selected/deferred upstream test plan for one header."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    inventory = scan_header_inventory(args.cccl_repo)
+    test_index = scan_test_index(args.cccl_repo)
+    dep_graph = scan_dependency_graph(args.cccl_repo)
+    status_report = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
+    plan = plan_upstream_tests_for_header(
+        test_index,
+        entry_header=args.entry_header,
+        dependency_status_by_header=status_by_header,
+        scaffold_inexpressible_tests=set(args.scaffold_inexpressible or []),
+        max_selected_tests=args.max_selected_tests,
+    )
+    output = args.output or default_test_plan_filename(args.entry_header)
+    report_path = write_upstream_test_plan_report(plan, config.output_dir, filename=output)
+    summary = plan.summary()
+    print("== Node 13 upstream test migration plan ==")
+    print(f"entry_header: {plan.entry_header}")
+    print(f"selected_tests: {summary['selected_count']}")
+    print(f"deferred_tests: {summary['deferred_count']}")
+    print("deferred_reason_counts:")
+    for reason, count in summary["deferred_reason_counts"].items():
+        print(f"  {reason}: {count}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def _mock_test_migration_payload(include_path: str) -> dict:
+    """Small valid test-migration payload for offline `test-migrate --mock` smoke runs."""
+    return {
+        "host_test_code": (
+            f'#include "{include_path}"\n'
+            "static int g_failures = 0;\n"
+            "int main(){ return g_failures == 0 ? 0 : 1; }\n"
+        ),
+        "kernel_spec": {
+            "dtype": "float",
+            "gm_inputs": 2,
+            "gm_outputs": 1,
+            "input_init": "h_x[i] = static_cast<float>(i); h_y[i] = static_cast<float>(i + 1);",
+            "element_op_code": "z_val = x_val;",
+            "golden_code": "expected = x_ref;",
+        },
+        "notes": "mock test migration payload; validates orchestration only",
+    }
+
+
+def _write_test_migration_artifact_report(
+    config: Config,
+    artifacts,
+    *,
+    output: str,
+) -> Path:
+    name = Path(output)
+    if name.is_absolute() or len(name.parts) != 1:
+        raise ValueError("test migration artifact filename must be a file name under outputs/")
+    payload = {
+        "algo_name": artifacts.algo_name,
+        "host_test_code": artifacts.host_test_code,
+        "kernel_spec": artifacts.kernel_spec,
+        "notes": artifacts.notes,
+        "upstream_test_plan": (
+            artifacts.upstream_test_plan.to_dict()
+            if artifacts.upstream_test_plan is not None
+            else None
+        ),
+    }
+    path = config.output_dir / name
+    save_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def cmd_test_migrate(args) -> int:
+    """Generate Node 13 AI test artifacts for one header without writing/running tests."""
+    if args.mock and args.real_ai:
+        print("error: --mock and --real-ai are mutually exclusive", file=sys.stderr)
+        return 2
+    if not (args.mock or args.real_ai):
+        print("error: choose --mock or --real-ai explicitly", file=sys.stderr)
+        return 2
+
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    overrides = {"model": {"provider": "mock"}} if args.mock else None
+    config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
+
+    inventory = scan_header_inventory(args.cccl_repo)
+    test_index = scan_test_index(args.cccl_repo)
+    dep_graph = scan_dependency_graph(args.cccl_repo)
+    status_report = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
+
+    source_path = Path(inventory.header_root) / args.entry_header
+    if not source_path.exists():
+        print(f"error: source header not found: {source_path}", file=sys.stderr)
+        return 2
+    target_relpath = target_relpath_for_header(
+        args.entry_header,
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    target_path = Path(config.target_repo) / target_relpath
+    if not target_path.exists():
+        print(f"error: ACCL target header not found: {target_path}", file=sys.stderr)
+        return 2
+    include_path = OperatorTestRunner.include_path_from_target_relpath(target_relpath)
+    algo_name = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
+
+    model_client = (
+        MockModelClient(responses=[json.dumps(_mock_test_migration_payload(include_path))])
+        if args.mock
+        else build_model_client(config)
+    )
+    artifacts = migrate_operator_tests(
+        config,
+        model_client,
+        algo_name=algo_name,
+        include_path=include_path,
+        target_relpath=target_relpath,
+        cccl_header_text=source_path.read_text(encoding="utf-8", errors="replace"),
+        accl_header_text=target_path.read_text(encoding="utf-8", errors="replace"),
+        cccl_test_text="",
+        test_index=test_index,
+        entry_header=args.entry_header,
+        dependency_status_by_header=status_by_header,
+        scaffold_inexpressible_tests=set(args.scaffold_inexpressible or []),
+        verbose=not args.quiet,
+        show_model_io=getattr(args, "show_model_io", False),
+        toolbox=None if args.mock else _maybe_build_toolbox(config),
+        max_tool_rounds=config.model_max_tool_rounds,
+    )
+    report_path = _write_test_migration_artifact_report(config, artifacts, output=args.output)
+    plan_summary = artifacts.upstream_test_plan.summary() if artifacts.upstream_test_plan else {}
+    print("== Node 13 AI test migration artifacts ==")
+    print(f"entry_header: {args.entry_header}")
+    print(f"mode: {_mode_label(mock=args.mock, real_ai=args.real_ai)}")
+    print(f"model: {_model_label(config)}")
+    print(f"selected_tests: {plan_summary.get('selected_count', 0)}")
+    print(f"deferred_tests: {plan_summary.get('deferred_count', 0)}")
+    print(f"has_host: {artifacts.has_host()}")
+    print(f"has_kernel: {artifacts.has_kernel()}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_dep_graph(args) -> int:
+    """Scan CCCL headers and write a deterministic include dependency graph report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_dependency_graph(args.cccl_repo)
+    report_path = write_dependency_graph_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL libcudacxx include dependency graph ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"header_root: {report.header_root}")
+    print(f"headers: {summary['header_count']}")
+    print(f"edges: {summary['edge_count']}")
+    print(f"cycles: {summary['cycle_count']}")
+    print(f"unknown_cuda_std_includes: {summary['unknown_cuda_std_include_count']}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_revalidate_samples(args) -> int:
+    """Write the Node 6 real-upstream sample revalidation report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = build_sample_revalidation_report(
+        args.cccl_repo,
+        target_repo=config.target_repo,
+    )
+    report_path = write_sample_revalidation_report(report, config.output_dir, filename=args.output)
+    summary = report["summary"]
+    print("== Node 6 sample revalidation ==")
+    print(f"cccl_repo: {report['cccl_repo']}")
+    print(f"test_root: {report['test_root']}")
+    print(f"samples: {summary['sample_count']}")
+    print(f"mapped_samples: {summary['mapped_sample_count']}")
+    for sample in report["samples"]:
+        print(
+            f"- {sample['name']}: {sample['status']}, "
+            f"header={sample['upstream_header']}, tests={len(sample['candidate_tests'])}, "
+            f"target_exists={sample['target_header_exists']}, host={sample['host_test_exists']}, "
+            f"kernel_spec={sample['kernel_spec_exists']}"
+        )
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_migration_status(args) -> int:
+    """Write the Node 9 machine-readable migration status report."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    report = scan_migration_status(
+        args.cccl_repo,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    report_path = write_migration_status_report(report, config.output_dir, filename=args.output)
+    summary = report.summary()
+    print("== CCCL -> ACCL migration status ==")
+    print(f"cccl_repo: {report.cccl_repo}")
+    print(f"target_repo: {report.target_repo}")
+    print(f"headers: {summary['header_count']}")
+    print(f"migrated_headers: {summary['migrated_header_count']}")
+    print(f"target_only_headers: {summary['target_only_header_count']}")
+    print(f"missing_dependencies: {summary['missing_dependency_count']}")
+    print("missing_dependency_classifications:")
+    for classification, count in summary["missing_dependency_classification_counts"].items():
+        print(f"  {classification}: {count}")
+    print(f"batch_candidates: {summary['batch_candidate_count']}")
+    print(f"mapped_headers: {summary['mapped_header_count']}")
+    print(f"unmapped_tests: {summary['unmapped_test_count']}")
+    print("status_counts:")
+    for status, count in summary["status_counts"].items():
+        print(f"  {status}: {count}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_migration_context(args) -> int:
+    """Write the Node 11 bounded AI migration context pack for one header."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    output = args.output or default_context_pack_filename(args.entry_header)
+    pack = build_migration_context_pack_from_scans(
+        entry_header=args.entry_header,
+        cccl_repo=args.cccl_repo,
+        target_repo=config.target_repo,
+        examples_root=PROJECT_ROOT / "examples",
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+    report_path = write_migration_context_pack(pack, config.output_dir, filename=output)
+    print("== AI migration context pack ==")
+    print(f"entry_header: {pack['entry_header']}")
+    print(f"include: {pack['include']}")
+    print(f"dependency_closure_size: {pack['dependency_closure']['closure_size']}")
+    print(f"mapped_upstream_tests: {len(pack['mapped_upstream_tests'])}")
+    print(f"nearby_accl_sibling_headers: {len(pack['nearby_accl_sibling_headers'])}")
+    print(f"relevant_validated_examples: {len(pack['relevant_validated_examples'])}")
+    print(f"target_counterpart_exists: {pack['existing_accl_counterpart']['exists']}")
+    print(f"report: {report_path}")
+    return 0
+
+
+def cmd_dependency_convert(args) -> int:
+    """Run the Node 12 dependency-aware header migration orchestration for one entry."""
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    if args.mock and args.real_ai:
+        print("error: --mock and --real-ai are mutually exclusive", file=sys.stderr)
+        return 2
+    if not args.plan_only and not (args.mock or args.real_ai):
+        print("error: choose --plan-only, --mock, or --real-ai explicitly", file=sys.stderr)
+        return 2
+
+    overrides = {"model": {"provider": "mock"}} if args.mock or args.plan_only else None
+    config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
+
+    inventory = scan_header_inventory(args.cccl_repo)
+    test_index = scan_test_index(args.cccl_repo)
+    dep_graph = scan_dependency_graph(args.cccl_repo)
+    status_report = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+    )
+
+    model_client = MockModelClient(responses=[]) if args.plan_only else (
+        MockModelClient() if args.mock else build_model_client(config)
+    )
+    pipeline = Pipeline(
+        config,
+        model_client,
+        verifier=None,
+        verbose=not args.quiet,
+        show_model_io=getattr(args, "show_model_io", False),
+        toolbox=None if args.plan_only else _maybe_build_toolbox(config),
+    )
+    result = pipeline.convert_dependency_closure(
+        entry_header=args.entry_header,
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status_report,
+        write_to_repo=not args.no_write_target,
+        plan_only=args.plan_only,
+    )
+    report_path = write_dependency_convert_report(config, result, args.output)
+
+    print("== Node 12 dependency-aware header migration ==")
+    print(f"entry_header: {result.entry_header}")
+    print(f"mode: {_mode_label(plan_only=args.plan_only, mock=args.mock, real_ai=args.real_ai)}")
+    print(f"model: {_model_label(config, plan_only=args.plan_only)}")
+    print(f"ordered_headers: {len(result.ordered_headers)}")
+    print(f"skipped_headers: {len(result.skipped_headers)}")
+    print(f"rewritten_headers: {len(result.rewritten_headers)}")
+    print(f"complete: {result.complete}")
+    if result.error:
+        print(f"error: {result.error}")
+    print(f"report: {report_path}")
+    return 2 if result.error else 0
+
+
 # --------------------------------------------------------------------------- #
 # 解析
 # --------------------------------------------------------------------------- #
@@ -944,6 +1398,203 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_self = sub.add_parser("selftest", help="离线冒烟测试")
     p_self.set_defaults(func=cmd_selftest)
+
+    p_inventory = sub.add_parser(
+        "inventory",
+        help="只读扫描真实 CCCL libcudacxx headers，并写入 deterministic JSON 报告",
+    )
+    p_inventory.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_inventory.add_argument(
+        "--output",
+        default="cccl_header_inventory.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_inventory.set_defaults(func=cmd_inventory)
+
+    p_test_index = sub.add_parser(
+        "test-index",
+        help="只读扫描真实 CCCL libcudacxx tests，并写入 header/test mapping 报告",
+    )
+    p_test_index.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_test_index.add_argument(
+        "--output",
+        default="cccl_test_index.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_test_index.set_defaults(func=cmd_test_index)
+
+    p_test_plan = sub.add_parser(
+        "test-plan",
+        help="Node 13：为一个 CCCL header 生成 selected/deferred 上游测试迁移计划",
+    )
+    p_test_plan.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __numeric/midpoint.h",
+    )
+    p_test_plan.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_test_plan.add_argument(
+        "--max-selected-tests",
+        type=int,
+        default=4,
+        help="最多选入 prompt 的 mapped .pass.cpp 数量",
+    )
+    p_test_plan.add_argument(
+        "--scaffold-inexpressible",
+        action="append",
+        default=[],
+        help="显式标记为当前 kernel scaffold 不可表达的上游测试相对路径；可重复",
+    )
+    p_test_plan.add_argument(
+        "--output",
+        help="写入 outputs/ 下的报告文件名；默认按 entry header 自动生成",
+    )
+    p_test_plan.set_defaults(func=cmd_test_plan)
+
+    p_test_migrate = sub.add_parser(
+        "test-migrate",
+        help="Node 13：为一个已迁移 ACCL header 生成 AI host/kernel 测试 artifacts（不写测试、不运行）",
+    )
+    p_test_migrate.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __algorithm/max.h",
+    )
+    p_test_migrate.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_test_migrate.add_argument("--mock", action="store_true", help="使用 mock 模型生成测试 artifacts")
+    p_test_migrate.add_argument("--real-ai", action="store_true", help="显式允许真实模型/API 调用")
+    p_test_migrate.add_argument(
+        "--scaffold-inexpressible",
+        action="append",
+        default=[],
+        help="显式标记为当前 kernel scaffold 不可表达的上游测试相对路径；可重复",
+    )
+    p_test_migrate.add_argument(
+        "--output",
+        default="test_migration_artifacts.json",
+        help="写入 outputs/ 下的 artifacts 报告文件名",
+    )
+    p_test_migrate.add_argument("--quiet", action="store_true", help="减少日志输出")
+    p_test_migrate.add_argument(
+        "--show-model-io",
+        action="store_true",
+        help="真实模型调用时打印与模型的完整对话",
+    )
+    p_test_migrate.set_defaults(func=cmd_test_migrate)
+
+    p_dep_graph = sub.add_parser(
+        "dep-graph",
+        help="只读扫描真实 CCCL libcudacxx headers，并写入 include dependency graph 报告",
+    )
+    p_dep_graph.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_dep_graph.add_argument(
+        "--output",
+        default="cccl_dep_graph.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_dep_graph.set_defaults(func=cmd_dep_graph)
+
+    p_revalidate = sub.add_parser(
+        "revalidate-samples",
+        help="只读参考真实 CCCL，汇总 Node 6 既有样本的 header/test 映射证据",
+    )
+    p_revalidate.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_revalidate.add_argument(
+        "--output",
+        default="sample_revalidation.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_revalidate.set_defaults(func=cmd_revalidate_samples)
+
+    p_status = sub.add_parser(
+        "migration-status",
+        help="生成 Node 9 machine-readable migration status JSON 报告",
+    )
+    p_status.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_status.add_argument(
+        "--output",
+        default="migration_status.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_status.set_defaults(func=cmd_migration_status)
+
+    p_context = sub.add_parser(
+        "migration-context",
+        help="生成 Node 11 bounded AI migration context pack JSON",
+    )
+    p_context.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __algorithm/all_of.h",
+    )
+    p_context.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_context.add_argument(
+        "--output",
+        help="写入 outputs/ 下的报告文件名；默认按 entry header 自动生成",
+    )
+    p_context.set_defaults(func=cmd_migration_context)
+
+    p_dep_convert = sub.add_parser(
+        "dependency-convert",
+        help="Node 12：按依赖闭包 leaf-first 迁移一个 CCCL header",
+    )
+    p_dep_convert.add_argument(
+        "--entry-header",
+        required=True,
+        help="CCCL header relative to libcudacxx/include/cuda/std, e.g. __algorithm/all_of.h",
+    )
+    p_dep_convert.add_argument(
+        "--cccl-repo",
+        help="真实 CCCL 仓库根目录；默认取 CCCL_REPO，再退到 /home/zhenyu/projects/cccl",
+    )
+    p_dep_convert.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="只输出 leaf-first 计划，不调用模型也不写入 ACCL",
+    )
+    p_dep_convert.add_argument("--mock", action="store_true", help="使用 mock 模型执行 dependency rewrite")
+    p_dep_convert.add_argument("--real-ai", action="store_true", help="显式允许真实模型/API 调用")
+    p_dep_convert.add_argument(
+        "--no-write-target",
+        action="store_true",
+        help="实际 rewrite 时只生成到 outputs/，不写入目标 ACCL 仓库",
+    )
+    p_dep_convert.add_argument(
+        "--output",
+        default="dependency_convert_report.json",
+        help="写入 outputs/ 下的报告文件名",
+    )
+    p_dep_convert.add_argument("--quiet", action="store_true", help="减少日志输出")
+    p_dep_convert.add_argument(
+        "--show-model-io",
+        action="store_true",
+        help="实际 rewrite 时打印与模型的完整对话",
+    )
+    p_dep_convert.set_defaults(func=cmd_dependency_convert)
 
     p_mk = sub.add_parser(
         "make-example", help="把已迁移并验证的算子晋升为 examples/ 金标准 few-shot 示例"

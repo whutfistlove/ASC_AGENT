@@ -1,0 +1,7 @@
+#ifndef ASCEND_STD_FUNCTIONAL
+#define ASCEND_STD_FUNCTIONAL
+
+#include "ascend/std/__functional/identity.h"
+#include "ascend/std/__functional/operations.h"
+
+#endif  // ASCEND_STD_FUNCTIONAL

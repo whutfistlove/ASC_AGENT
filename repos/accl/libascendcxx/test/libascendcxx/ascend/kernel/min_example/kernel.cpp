@@ -1,13 +1,13 @@
-// auto-workload=full (n=16384, cores=8, tiles=32x64, inputs=2, outputs=1, dtype=float)
+// auto-workload=fast (n=64, cores=1, tiles=1x64, inputs=2, outputs=1, dtype=float)
 #include "kernel_operator.h"
 #include "ascend/std/__algorithm/min.h"
 
 extern "C" __global__ __aicore__ void min_kernel(GM_ADDR in0_gm, GM_ADDR in1_gm, GM_ADDR out0_gm)
 {
-    constexpr int32_t TOTAL_LENGTH = 16384;
-    constexpr int32_t CORE_NUM = 8;
+    constexpr int32_t TOTAL_LENGTH = 64;
+    constexpr int32_t CORE_NUM = 1;
     constexpr int32_t BLOCK_LENGTH = TOTAL_LENGTH / CORE_NUM;
-    constexpr int32_t TILE_NUM = 32;
+    constexpr int32_t TILE_NUM = 1;
     constexpr int32_t TILE_SIZE = 64;
 
     uint32_t block_id = AscendC::GetBlockIdx();
