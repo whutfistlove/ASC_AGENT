@@ -15,6 +15,8 @@ ASC_agent 是一个面向 **CCCL 到 ACCL** 的迁移与验证助手。它以
 5. 可选：把 CCCL 测试迁移成 ACCL host 测试和 kernel `kernel_spec`。
 6. 可选：运行 host C++ 测试和 AscendC kernel 仿真测试。
 7. 可选：把测试失败日志回传给模型，修复 header、host 测试或 kernel spec。
+8. 可选：按**依赖闭包**迁移跨头依赖的算子——自动发现入口头在 `cuda/std` 内的全部仓内依赖，
+   按叶子优先顺序整体迁移（`dependency-convert`）。
 
 ## 快速命令
 
@@ -36,6 +38,12 @@ python3 main.py test --input <header>
 
 # 把已迁移并验证的算子晋升为 examples/ 金标准示例（不带参数则列出候选）。
 python3 main.py make-example clamp sort3 quad_fanout
+
+# 按依赖闭包迁移一个跨头依赖的算子（叶子优先；先看计划加 --plan-only，真实迁移加 --real-ai）。
+python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai
+
+# 只看某入口头的 include 依赖图与迁移顺序。
+python3 main.py dep-graph --cccl-repo repos/cccl
 ```
 
 没有 CANN/cannsim 的机器可以加 `--host-only`。需要更快的 kernel 小规模检查时可以加
@@ -96,7 +104,7 @@ python3 main.py make-example clamp sort3 quad_fanout
 
 ```text
 ASC_agent
-├── main.py                         命令行入口：convert / run / batch / test / selftest
+├── main.py                         命令行入口：convert / run / batch / test / dependency-convert / make-example / selftest
 ├── config/
 │   ├── settings.yaml               路径、模型、重试和测试配置
 │   └── batch_manifest.yaml         批量迁移清单
@@ -117,7 +125,13 @@ ASC_agent
 │   ├── failure_triage.py           测试失败分类（env 环境问题 / code 可修）
 │   ├── agent_tools.py              模型取证/自检工具 + 工具箱工厂（覆盖生成与修复）
 │   ├── fix_once.py                 基于提交日志或测试日志的单轮修复
-│   └── repo_verify.py              仓库格式化/提交类校验
+│   ├── repo_verify.py              仓库格式化/提交类校验
+│   ├── dep_graph.py                CCCL 头 include 依赖图 + 叶子优先拓扑序（依赖闭包）
+│   ├── inventory.py                真实 CCCL 头清单扫描
+│   ├── test_index.py               真实 CCCL 测试索引
+│   ├── migration_context.py        喂给模型的有界依赖上下文包
+│   ├── migration_status.py         机器可读迁移状态报告
+│   └── sample_revalidation.py      样本对真实 CCCL 树的复验
 ├── skills/                         模型提示词
 │   └── _shared/                    被各 skill 用 {{include:}} 复用的契约片段（单一事实源）
 ├── examples/
@@ -274,6 +288,30 @@ python3 main.py make-example --all --overwrite     # 全量刷新
 > 仓库已据此把示例库从 `{max, os}` 头 + `{max, swap}` 测试扩到 8 个头 + 6 套测试，覆盖二元返回
 > （max/min）、原地 void（swap）、三参（clamp）、多输出 pair（minmax 头）、多 IO 整数（sort3）、
 > 宽 IO（quad_fanout）等多种算子形态。
+
+## 依赖闭包迁移（单文件 → 依赖闭包）
+
+对**跨头依赖**的算子，单文件迁移会断在缺失依赖上（例如 `minmax` 依赖 `pair`）。
+`dependency-convert` 把迁移单位从单文件升级为**依赖闭包**：从入口头解析其在 `cuda/std`
+内的全部仓内依赖（`core/dep_graph.py`），按**叶子优先**拓扑序逐个迁移；已迁移并验证过的依赖
+直接跳过/复用，每个待迁头还会拿到一份有界的依赖上下文包（`core/migration_context.py`）。
+
+```bash
+# 先看计划（不调模型、不写盘）
+python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --plan-only
+# 真实迁移整条闭包并写入 ACCL
+python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai
+```
+
+仓内自带一条验证该能力的依赖链测试用例：`__numeric/spread3.h → range_width.h → abs_diff.h`
+（叶子优先序 `max, min, abs_diff, range_width, spread3`），实测闭包迁移 + host + kernel 仿真均通过。
+
+## kernel SOC 版本（与本机 CANN 匹配）
+
+kernel 仿真的芯片型号由 `config/settings.yaml` 的 `tests.kernel_soc_version` /
+`tests.kernel_cannsim_soc_version` 决定，**因机而异**：本机 CANN(cann-9.0.0) 用
+`Ascend950PR_9599`（cannsim `Ascend950`）。换机器若 CMake 报 `SOC_VERSION ... does not support`，
+按该机 CANN 的支持列表改这两个值即可。
 
 更完整的安装、工作流和测试逻辑见 [docs/guide.md](docs/guide.md)；尚未实现的方向见
 [docs/roadmap.md](docs/roadmap.md)。

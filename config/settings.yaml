@@ -78,8 +78,9 @@ retry:
   max_fix_rounds: 5
 
 tests:
-  # Match the CANN 9.0.0-alpha.1 setup validated in /home/zhenyu/projects/mylearn.
-  kernel_soc_version: Ascend910_9599
+  # 本机 CANN (cann-9.0.0) 支持 Ascend950PR_9599；合并 develop_jzy 时引入的
+  # Ascend910_9599 在本机不被支持（CMake host_config 报 "does not support"）。
+  kernel_soc_version: Ascend950PR_9599
   kernel_cannsim_soc_version: Ascend950
 
 examples:

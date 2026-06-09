@@ -16,3 +16,8 @@ inputs:
   - "repos/cccl/libcudacxx/include/cuda/std/__numeric/gcd.h"
   - "repos/cccl/libcudacxx/include/cuda/std/__numeric/lcm.h"
   - "repos/cccl/libcudacxx/include/cuda/std/__numeric/midpoint.h"
+  # 依赖闭包测试用例（叶子优先）：batch 是单文件迁移，依赖须排在被依赖者之后；
+  # 真正的闭包自动排序见 `python main.py dependency-convert --entry-header __numeric/spread3.h`。
+  - "repos/cccl/libcudacxx/include/cuda/std/__numeric/abs_diff.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__numeric/range_width.h"
+  - "repos/cccl/libcudacxx/include/cuda/std/__numeric/spread3.h"
