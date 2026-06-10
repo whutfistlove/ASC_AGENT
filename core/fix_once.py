@@ -281,7 +281,7 @@ def build_test_artifact_fix_request(
    input_init / element_op_code / golden_code。多输出时 element_op_code 应给
    out0_val...outM_val 赋值，golden_code 应给 expected0...expectedM 赋值；旧的
    z_val / expected 仍等价于 out0_val / expected0。
-5. kernel_spec 的 golden_code 必须是独立参考实现，禁止调用 ascend::std::*。
+5. kernel_spec 的 golden_code 必须是独立参考实现，禁止调用 asc::std::*。
 6. 若改 header_code：保持 expected_header_guard 与版权头不变，做最小必要改动。
 7. 若返回 host_test_code：必须让任一用例失败时进程返回非零（例如累计 g_failures，
    最终 return g_failures == 0 ? 0 : 1），不能只打印 FAIL 后 return 0。

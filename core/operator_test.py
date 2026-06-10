@@ -91,9 +91,9 @@ class OperatorTestRunner:
         self._kernel_cannsim_soc_version = getattr(config, "kernel_cannsim_soc_version", "Ascend950")
 
         self._target_repo = Path(config.target_repo).resolve()
-        self._libascendcxx = self._target_repo / "libascendcxx"
-        self._host_dir = self._libascendcxx / "test" / "libascendcxx" / "ascend" / "host"
-        self._kernel_root = self._libascendcxx / "test" / "libascendcxx" / "ascend" / "kernel"
+        self._asc_stl = self._target_repo / "asc-stl"
+        self._host_dir = self._asc_stl / "test" / "asc-stl" / "asc" / "host"
+        self._kernel_root = self._asc_stl / "test" / "asc-stl" / "asc" / "kernel"
         self._outputs = config.output_dir
 
     def _log(self, *args) -> None:
@@ -179,13 +179,13 @@ class OperatorTestRunner:
             body = (
                 "void test_max_basic()\n"
                 "{\n"
-                "    assert(ascend::std::max(1, 2) == 2);\n"
-                "    assert(ascend::std::max(5.0f, 3.0f) == 5.0f);\n"
+                "    assert(asc::std::max(1, 2) == 2);\n"
+                "    assert(asc::std::max(5.0f, 3.0f) == 5.0f);\n"
                 "}\n\n"
                 "void test_max_custom_comp()\n"
                 "{\n"
                 "    auto comp = [](int a, int b) { return a < b; };\n"
-                "    assert(ascend::std::max(10, 20, comp) == 20);\n"
+                "    assert(asc::std::max(10, 20, comp) == 20);\n"
                 "}\n\n"
                 "int main()\n"
                 "{\n"
@@ -198,8 +198,8 @@ class OperatorTestRunner:
             body = (
                 "void test_min_basic()\n"
                 "{\n"
-                "    assert(ascend::std::min(1, 2) == 1);\n"
-                "    assert(ascend::std::min(5.0f, 3.0f) == 3.0f);\n"
+                "    assert(asc::std::min(1, 2) == 1);\n"
+                "    assert(asc::std::min(5.0f, 3.0f) == 3.0f);\n"
                 "}\n\n"
                 "int main()\n"
                 "{\n"
@@ -217,7 +217,7 @@ class OperatorTestRunner:
                 "    // Provide a model-migrated host test for real semantic checks.\n"
                 f'    std::cout << "[host][{algo}][SMOKE-ONLY] compile/instantiate smoke; '
                 'semantic check skipped" << std::endl;\n'
-                f"    auto out = ascend::std::{algo}(1.0f, 2.0f);\n"
+                f"    auto out = asc::std::{algo}(1.0f, 2.0f);\n"
                 "    (void)out;\n"
                 "    return 0;\n"
                 "}\n"
@@ -484,16 +484,16 @@ class OperatorTestRunner:
 
     def run_host_test(self, result: OperatorTestResult) -> None:
         # 执行前主动清理过期的 CMake 缓存（项目改名/移动后的旧缓存会让 cmake 报错）。
-        if not self.dry_run and build_env.remove_stale_cmake_cache(self._libascendcxx / "build"):
-            self._log(f"[test] 已清理过期 CMake 缓存: {self._libascendcxx / 'build'}")
+        if not self.dry_run and build_env.remove_stale_cmake_cache(self._asc_stl / "build"):
+            self._log(f"[test] 已清理过期 CMake 缓存: {self._asc_stl / 'build'}")
         # 生成统一的 host 运行脚本（取代签入的 000/001），保证 host 与 kernel 同源。
-        script = self._libascendcxx / "run_host_test.sh"
+        script = self._asc_stl / "run_host_test.sh"
         self._write_run_script(script, self._host_run_test_sh(result.algo_name))
         cmd = "bash ./run_host_test.sh\n"
         passed, log = self._exec_and_log(
             result,
             cmd=cmd,
-            cwd=self._libascendcxx,
+            cwd=self._asc_stl,
             log_path=self._outputs / f"host_test_{result.algo_name}.log",
             timeout=self._host_timeout,
             env_extra=self._kernel_env_extra(),
@@ -556,17 +556,17 @@ class OperatorTestRunner:
             if not self.dry_run:
                 passed = self._kernel_run_test_passed(passed, log)
         elif kernel_mode == "full_project":
-            # full_project 走 libascendcxx/build；同样先清掉过期 CMake 缓存。
-            if not self.dry_run and build_env.remove_stale_cmake_cache(self._libascendcxx / "build"):
-                self._log(f"[test] 已清理过期 CMake 缓存: {self._libascendcxx / 'build'}")
+            # full_project 走 asc-stl/build；同样先清掉过期 CMake 缓存。
+            if not self.dry_run and build_env.remove_stale_cmake_cache(self._asc_stl / "build"):
+                self._log(f"[test] 已清理过期 CMake 缓存: {self._asc_stl / 'build'}")
             # 生成统一的 full_project 运行脚本（取代签入的 000/004）。
-            script = self._libascendcxx / "run_kernel_full.sh"
+            script = self._asc_stl / "run_kernel_full.sh"
             self._write_run_script(script, self._full_project_run_sh(result.algo_name))
             cmd = "bash ./run_kernel_full.sh\n"
             passed, log = self._exec_and_log(
                 result,
                 cmd=cmd,
-                cwd=self._libascendcxx,
+                cwd=self._asc_stl,
                 log_path=self._outputs / f"kernel_test_{result.algo_name}.log",
                 timeout=self._kernel_timeout,
                 env_extra=env_extra,

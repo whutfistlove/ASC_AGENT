@@ -17,7 +17,7 @@
 {
   "root_cause": "operator | host_test | kernel_test | env | mixed",
   "rewritten_code": "<改后的完整算子头（header）；不改则省略>",
-  "host_test_code": "<改后的完整 ascend/host/<algo>_tests.cpp；不改则省略>",
+  "host_test_code": "<改后的完整 asc/host/<algo>_tests.cpp；不改则省略>",
   "kernel_spec": { "gm_inputs": 2, "gm_outputs": 1, "input_init": "...", "element_op_code": "...", "golden_code": "..." },
   "notes": "<根因判断、改了哪几件、为什么不改算子>"
 }

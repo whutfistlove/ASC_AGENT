@@ -5,7 +5,7 @@
 能力封装成有界、可沙箱、可单测的工具，让修复模型从"盲猜"变"可取证 + 可自验证"：
 
     * read_repo_file   —— 按需读目标仓任意头/源（如 __config、sibling 算子）
-    * grep_repo        —— 查符号/宏定义（如 _ASCEND_AICORE_FN 到底怎么定义）
+    * grep_repo        —— 查符号/宏定义（如 _ASC_AICORE_FN 到底怎么定义）
     * host_syntax_check—— host 产物先 g++ -fsyntax-only 自检，省一整轮往返
     * extract_error_lines —— 从大日志里只抽 error/warning 行回喂
 
@@ -28,14 +28,14 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "read_repo_file",
-            "description": "读取目标 ACCL 仓库内的一个文件（如 sibling 算子头、ascend/std/__config）。"
+            "description": "读取目标 ACCL 仓库内的一个文件（如 sibling 算子头、asc/std/__config）。"
             "用于在不把所有上下文塞进 prompt 的情况下，按需查看真实代码。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "relpath": {
                         "type": "string",
-                        "description": "相对目标仓库根的路径，如 libascendcxx/include/ascend/std/__config",
+                        "description": "相对目标仓库根的路径，如 asc-stl/include/asc/std/__config",
                     }
                 },
                 "required": ["relpath"],
@@ -47,7 +47,7 @@ TOOL_SCHEMAS: list[dict] = [
         "function": {
             "name": "grep_repo",
             "description": "在目标 ACCL 仓库内按正则搜索，定位宏/符号/函数的真实定义"
-            "（如 _ASCEND_AICORE_FN、_ASCEND_STD_BEGIN）。返回匹配的文件:行号:内容。",
+            "（如 _ASC_AICORE_FN、_ASC_STD_BEGIN）。返回匹配的文件:行号:内容。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -287,13 +287,13 @@ def build_toolbox(config):
     门槛：
       * `model.tools_enabled` 关闭 → None（保持「单轮 prompt→JSON」的旧行为）。
       * provider == mock → None（离线 mock 不需要真实工具，省去无谓的 tool 往返）。
-    host_syntax_check 的 -I 指向 ACCL include 根，让模型能就地解析 `ascend/std/...`。
+    host_syntax_check 的 -I 指向 ACCL include 根，让模型能就地解析 `asc/std/...`。
     """
     if not getattr(config, "model_tools_enabled", False):
         return None
     if getattr(config, "model_provider", "") == "mock":
         return None
-    include_dir = Path(config.target_repo) / "libascendcxx" / "include"
+    include_dir = Path(config.target_repo) / "asc-stl" / "include"
     return AgentToolbox(
         target_repo=Path(config.target_repo),
         output_dir=config.output_dir,

@@ -37,8 +37,8 @@ def run_test_sh(algo: str, cannsim_soc_version: str = KERNEL_CANNSIM_SOC_VERSION
         "set -e  # Exit on any error\n\n"
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
         'PROJECT_ROOT="$SCRIPT_DIR/../../../../.."\n'
-        'SRC_INCLUDE_DIR="$PROJECT_ROOT/include/ascend"\n'
-        'DST_KERNEL_SYMLINK="$SCRIPT_DIR/ascend"\n\n'
+        'SRC_INCLUDE_DIR="$PROJECT_ROOT/include/asc"\n'
+        'DST_KERNEL_SYMLINK="$SCRIPT_DIR/asc"\n\n'
         'if [ ! -d "$SRC_INCLUDE_DIR" ]; then\n'
         '    echo "ERROR: source header dir not found: $SRC_INCLUDE_DIR"\n'
         "    exit 1\n"
@@ -88,7 +88,7 @@ def run_test_sh(algo: str, cannsim_soc_version: str = KERNEL_CANNSIM_SOC_VERSION
 def host_run_test_sh(algo: str) -> str:
     """host 单测脚本：环境准备 + 配置 + 仅编译该算子 host 测试 + 跑对应 ctest。
 
-    在 libascendcxx 目录下运行，取代签入的 000_set_env.sh + 001_setup_build.sh。
+    在 asc-stl 目录下运行，取代签入的 000_set_env.sh + 001_setup_build.sh。
     """
     pattern = f"host\\.{algo}$"
     return (

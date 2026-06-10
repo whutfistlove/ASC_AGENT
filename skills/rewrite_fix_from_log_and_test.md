@@ -20,9 +20,9 @@
 {{include: _shared/operator_contract.md}}
 
 ACCL host/kernel 测试环境约束（用于判断测试失败原因）：
-1. 目标头位于 `ascend::std` 命名空间，由 `_ASCEND_STD_BEGIN` / `_ASCEND_STD_END`（定义于 `ascend/std/__config`）展开为 `namespace ascend { namespace std {`。
-2. host 与 device(__aicore__) 两侧都要调用的函数，必须用 `_ASCEND_AICORE_FN` 修饰（host 下退化为 `inline`，CCE 下为 `__aicore__ inline`）。
-3. host 测试（`ascend/host/<algo>_tests.cpp`）只链接标准 C++（`<cassert>`），不得依赖 CANN/ACL；host 编译失败多半是模板/常量表达式/包含路径问题。
+1. 目标头位于 `asc::std` 命名空间，由 `_ASC_STD_BEGIN` / `_ASC_STD_END`（定义于 `asc/std/__config`）展开为 `namespace asc { namespace std {`。
+2. host 与 device(__aicore__) 两侧都要调用的函数，必须用 `_ASC_AICORE_FN` 修饰（host 下退化为 `inline`，CCE 下为 `__aicore__ inline`）。
+3. host 测试（`asc/host/<algo>_tests.cpp`）只链接标准 C++（`<cassert>`），不得依赖 CANN/ACL；host 编译失败多半是模板/常量表达式/包含路径问题。
 4. kernel 仿真测试在 `__aicore__` kernel 中逐元素调用该算子，因此它必须能在 device 端以 inline/constexpr 调用，且不依赖异常或动态内存。
 5. 环境类失败（过期 CMakeCache、缺 llvm-objdump、缺 cannsim、驱动符号 undefined）不是代码问题：此时保持代码不变（`rewritten_code` 与基线一致即可），在 `notes` 写明"需修环境"。
 6. 因本流程只输出 header，若根因是 host/kernel 测试本身写错，请在 `notes` 写明"需要修正的是测试"，`rewritten_code` 与基线保持一致。绝不可把算子改成错误形态去迁就错误的测试。

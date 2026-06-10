@@ -3,12 +3,12 @@
 与 core/fix_once.py 同风格：通过注入的 model_client 调模型，便于 mock 下测试。
 
 产出（MigratedTests）：
-    * host_test_code —— 完整的 ascend/host/<algo>_tests.cpp，逐条打印用例数值；
+    * host_test_code —— 完整的 asc/host/<algo>_tests.cpp，逐条打印用例数值；
     * kernel_spec    —— kernel 仿真测试的“算子相关槽位”（input_init / element_op_code /
       golden_code / gm_inputs）。其余 AscendC 设备流水线与 ACL/cannsim 由固定脚手架提供。
 
 设计要点：
-    * golden_code 必须是**独立**参考实现，绝不调用 ascend::std::<algo>，从而消除
+    * golden_code 必须是**独立**参考实现，绝不调用 asc::std::<algo>，从而消除
       “期望值与被测函数同源”的自洽假绿。
     * 算子语义以 CCCL/ACCL 头为基准；测试适配算子真实形态（二元返回值 / 原地 void /
       三参等），不得为凑模板而篡改算子签名。
@@ -47,7 +47,7 @@ _HOST_SUCCESS_TERNARY_RETURN_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _HOST_EXPECTED_USES_TESTED_API_RE = re.compile(
-    r"\b(?:[\w:<>]+\s+)*(?:expected|golden|oracle|reference)\w*\s*=\s*[^;]*\bascend::std::",
+    r"\b(?:[\w:<>]+\s+)*(?:expected|golden|oracle|reference)\w*\s*=\s*[^;]*\basc::std::",
     flags=re.IGNORECASE,
 )
 _SAFE_DEPENDENCY_STATUSES = {"host_passed", "kernel_passed", "full_passed"}
@@ -145,8 +145,8 @@ def validate_kernel_spec(spec: dict) -> dict:
     missing = [k for k in _KERNEL_SPEC_REQUIRED if not str(spec.get(k, "")).strip()]
     if missing:
         raise ValueError(f"kernel_spec 缺少必填槽位: {missing}")
-    if "ascend::std::" in str(spec.get("golden_code", "")):
-        raise ValueError("kernel_spec.golden_code 必须使用独立 golden logic，禁止调用 ascend::std::*")
+    if "asc::std::" in str(spec.get("golden_code", "")):
+        raise ValueError("kernel_spec.golden_code 必须使用独立 golden logic，禁止调用 asc::std::*")
     out = {k: str(spec[k]) for k in _KERNEL_SPEC_REQUIRED}
     out["gm_inputs"] = _normalize_count(
         spec.get("gm_inputs", 2), default=2, minimum=1, maximum=_MAX_GM_INPUTS
@@ -171,7 +171,7 @@ def validate_host_test_code(code: object, *, algo_name: str = "") -> str:
     text = code.strip()
     if _HOST_EXPECTED_USES_TESTED_API_RE.search(text):
         name = f" {algo_name}" if algo_name else ""
-        raise ValueError(f"host_test_code{name} 的 expected/golden 必须使用独立逻辑，禁止调用 ascend::std::*")
+        raise ValueError(f"host_test_code{name} 的 expected/golden 必须使用独立逻辑，禁止调用 asc::std::*")
     if (
         re.search(r"\bassert\s*\(", text)
         or _HOST_NONZERO_LITERAL_RETURN_RE.search(text)

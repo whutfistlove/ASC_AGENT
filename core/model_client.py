@@ -376,7 +376,7 @@ class MockModelClient:
             f"#ifndef {guard}\n"
             f"#define {guard}\n\n"
             f"// mock-generated ACCL draft (no copyright header on purpose)\n"
-            f"#define _ACCL_OS(...) _ACCL_OS_##__VA_ARGS__##_()\n\n"
+            f"#define _ASC_OS(...) _ASC_OS_##__VA_ARGS__##_()\n\n"
             f"#endif  // {guard}\n"
         )
         payload = {

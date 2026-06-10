@@ -71,7 +71,7 @@ def score_header_code(code: str, guard: str) -> float:
         s += 1.0
     elif opens != closes:
         s -= 1.0  # 预处理指令不配平：几乎必编译失败
-    if "ascend::std" in code or "_ASCEND" in code:
+    if "asc::std" in code or "_ASC_" in code:
         s += 0.5  # 命中目标命名空间/宏，更像真正迁好的产物
     return s
 

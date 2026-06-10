@@ -31,7 +31,7 @@ STATUS_VALUES: tuple[str, ...] = (
 )
 _STATUS_RANK = {status: idx for idx, status in enumerate(STATUS_VALUES)}
 _LEDGER_STATUSES = set(STATUS_VALUES)
-_TARGET_STD_PREFIX = "libascendcxx/include/ascend/std"
+_TARGET_STD_PREFIX = "asc-stl/include/asc/std"
 MISSING_DEPENDENCY_CLASSIFICATIONS: tuple[str, ...] = (
     "true_dependency_gap",
     "bootstrap_manual",
@@ -283,8 +283,8 @@ def _ledger_source_keys(area: str, item: str) -> list[str]:
         raw = raw.strip()
         if not raw:
             continue
-        if raw.startswith("ascend/std/"):
-            keys.add(_TARGET_STD_PREFIX + "/" + raw[len("ascend/std/"):])
+        if raw.startswith("asc/std/"):
+            keys.add(_TARGET_STD_PREFIX + "/" + raw[len("asc/std/"):])
             continue
         if raw.startswith(_TARGET_STD_PREFIX + "/"):
             keys.add(raw)
@@ -318,8 +318,8 @@ def parse_migration_ledger_statuses(ledger_path: str | Path) -> list[LedgerStatu
         if len(cells) >= 4 and cells[2] in _LEDGER_STATUSES:
             for key in _ledger_source_keys(cells[0], cells[1]):
                 entries.append(LedgerStatusEntry(key=key, status=cells[2], source=str(path)))
-        elif len(cells) >= 3 and cells[1] in _LEDGER_STATUSES and cells[0].startswith("`ascend/std/"):
-            key = _TARGET_STD_PREFIX + "/" + _strip_code(cells[0])[len("ascend/std/"):]
+        elif len(cells) >= 3 and cells[1] in _LEDGER_STATUSES and cells[0].startswith("`asc/std/"):
+            key = _TARGET_STD_PREFIX + "/" + _strip_code(cells[0])[len("asc/std/"):]
             entries.append(LedgerStatusEntry(key=key, status=cells[1], source=str(path)))
     dedup: dict[str, LedgerStatusEntry] = {}
     for entry in entries:
@@ -359,12 +359,12 @@ def _algo_names_for_header(source_header: str) -> list[str]:
 
 
 def _host_test_exists(target_repo: Path, source_header: str) -> bool:
-    host_root = target_repo / "libascendcxx/test/libascendcxx/ascend/host"
+    host_root = target_repo / "asc-stl/test/asc-stl/asc/host"
     return any((host_root / f"{name}_tests.cpp").exists() for name in _algo_names_for_header(source_header))
 
 
 def _kernel_spec_exists(target_repo: Path, source_header: str) -> bool:
-    kernel_root = target_repo / "libascendcxx/test/libascendcxx/ascend/kernel"
+    kernel_root = target_repo / "asc-stl/test/asc-stl/asc/kernel"
     return any((kernel_root / f"{name}_example" / "kernel_spec.json").exists() for name in _algo_names_for_header(source_header))
 
 

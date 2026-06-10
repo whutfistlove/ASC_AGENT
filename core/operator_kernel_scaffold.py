@@ -97,7 +97,7 @@ class KernelScaffoldBuilder:
 
     @classmethod
     def host_h(cls, algo: str, gm_inputs: int = 2, gm_outputs: int = 1) -> str:
-        guard = f"LIBASCENDCXX_TEST_LIBASCENDCXX_ASCEND_KERNEL_{algo.upper()}_EXAMPLE_HOST_H_"
+        guard = f"ASC_STL_TEST_ASC_STL_ASC_KERNEL_{algo.upper()}_EXAMPLE_HOST_H_"
         params = ", ".join(
             ["uint32_t core_num", "void* stream"] + cls.host_arg_decls(gm_inputs, gm_outputs)
         )
@@ -105,7 +105,7 @@ class KernelScaffoldBuilder:
             f"#ifndef {guard}\n"
             f"#define {guard}\n\n"
             "#include <cstdint>\n\n"
-            f"void ascend_std_{algo}_do({params});\n\n"
+            f"void asc_std_{algo}_do({params});\n\n"
             f"#endif  // {guard}\n"
         )
 
@@ -121,7 +121,7 @@ class KernelScaffoldBuilder:
         return (
             '#include "host.h"\n\n'
             f'extern "C" void aclrtlaunch_{algo}_kernel({launch_decl});\n\n'
-            f"void ascend_std_{algo}_do({do_decl})\n"
+            f"void asc_std_{algo}_do({do_decl})\n"
             "{\n"
             f"    aclrtlaunch_{algo}_kernel({launch_args});\n"
             "}\n"
@@ -145,7 +145,7 @@ class KernelScaffoldBuilder:
         element_op = (
             str(kernel_spec.get("element_op_code")).strip()
             if kernel_spec and kernel_spec.get("element_op_code")
-            else f"z_val = ascend::std::{algo}(x_val, y_val);"
+            else f"z_val = asc::std::{algo}(x_val, y_val);"
         )
         arg_decls = ", ".join(cls.kernel_arg_decls(gm_inputs, gm_outputs))
         gm_decls = "\n".join(
@@ -269,7 +269,7 @@ class KernelScaffoldBuilder:
         golden = (
             str(kernel_spec.get("golden_code")).strip()
             if kernel_spec and kernel_spec.get("golden_code")
-            else f"expected = ascend::std::{algo}(x_ref, y_ref);"
+            else f"expected = asc::std::{algo}(x_ref, y_ref);"
         )
         host_vectors = "\n".join(
             [f"    std::vector<{t}> h_in{i}(n);" for i in range(gm_inputs)]
@@ -413,7 +413,7 @@ class KernelScaffoldBuilder:
             f"{dev_decls}\n"
             f"{dev_allocs}\n\n"
             f"{input_copies}\n\n"
-            f"    ascend_std_{algo}_do({w['core_num']}, stream, {launch_args});\n"
+            f"    asc_std_{algo}_do({w['core_num']}, stream, {launch_args});\n"
             "    CHECK_ACL(aclrtSynchronizeStream(stream));\n"
             f"{output_copies}\n\n"
             f"{verify_section}"

@@ -23,8 +23,8 @@ from core.test_migrator import validate_host_test_code, validate_kernel_spec
 from core.utils import save_text
 
 # host/kernel 测试在目标仓里的固定结构（与 core/operator_test.py 一致）。
-_HOST_SUBDIR = ("libascendcxx", "test", "libascendcxx", "ascend", "host")
-_KERNEL_SUBDIR = ("libascendcxx", "test", "libascendcxx", "ascend", "kernel")
+_HOST_SUBDIR = ("asc-stl", "test", "asc-stl", "asc", "host")
+_KERNEL_SUBDIR = ("asc-stl", "test", "asc-stl", "asc", "kernel")
 
 
 @dataclass

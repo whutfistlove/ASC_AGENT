@@ -26,31 +26,31 @@ DEFAULT_SAMPLE_TARGETS: tuple[SampleTarget, ...] = (
     SampleTarget(
         name="max",
         upstream_header="__algorithm/max.h",
-        target_header="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_header="asc-stl/include/asc/std/__algorithm/max.h",
         test_directory="algorithms/alg.sorting/alg.min.max",
     ),
     SampleTarget(
         name="min",
         upstream_header="__algorithm/min.h",
-        target_header="libascendcxx/include/ascend/std/__algorithm/min.h",
+        target_header="asc-stl/include/asc/std/__algorithm/min.h",
         test_directory="algorithms/alg.sorting/alg.min.max",
     ),
     SampleTarget(
         name="clamp",
         upstream_header="__algorithm/clamp.h",
-        target_header="libascendcxx/include/ascend/std/__algorithm/clamp.h",
+        target_header="asc-stl/include/asc/std/__algorithm/clamp.h",
         test_directory="algorithms/alg.sorting/alg.clamp",
     ),
     SampleTarget(
         name="swap",
         upstream_header="__utility/swap.h",
-        target_header="libascendcxx/include/ascend/std/__utility/swap.h",
+        target_header="asc-stl/include/asc/std/__utility/swap.h",
         test_directory="utilities/utility/utility.swap",
     ),
     SampleTarget(
         name="minmax",
         upstream_header="__algorithm/minmax.h",
-        target_header="libascendcxx/include/ascend/std/__algorithm/minmax.h",
+        target_header="asc-stl/include/asc/std/__algorithm/minmax.h",
         test_directory="algorithms/alg.sorting/alg.min.max",
     ),
 )
@@ -123,10 +123,10 @@ def build_sample_revalidation_report(
         target_path = target_root / target.target_header if target_root else None
         host_test = (
             target_root
-            / "libascendcxx"
+            / "asc-stl"
             / "test"
-            / "libascendcxx"
-            / "ascend"
+            / "asc-stl"
+            / "asc"
             / "host"
             / f"{target.name}_tests.cpp"
             if target_root
@@ -134,10 +134,10 @@ def build_sample_revalidation_report(
         )
         kernel_spec = (
             target_root
-            / "libascendcxx"
+            / "asc-stl"
             / "test"
-            / "libascendcxx"
-            / "ascend"
+            / "asc-stl"
+            / "asc"
             / "kernel"
             / f"{target.name}_example"
             / "kernel_spec.json"

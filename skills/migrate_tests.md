@@ -4,7 +4,7 @@
 
 你会收到：
 1. algo_name（算子名，如 max / swap / clamp）
-2. include_path（ACCL 头在测试里被 include 的相对路径，如 `ascend/std/__algorithm/swap.h`）
+2. include_path（ACCL 头在测试里被 include 的相对路径，如 `asc/std/__algorithm/swap.h`）
 3. target_relpath（ACCL 头在仓库中的相对路径）
 4. CCCL 头文件内容（语义参考）
 5. 已迁移好的 ACCL 头文件内容（真实可调用签名 —— 以它为准）
@@ -16,14 +16,14 @@
 
 ```json
 {
-  "host_test_code": "<完整的 ascend/host/<algo>_tests.cpp 文件内容>",
+  "host_test_code": "<完整的 asc/host/<algo>_tests.cpp 文件内容>",
   "kernel_spec": {
     "gm_inputs": 2,
     "gm_outputs": 1,
     "dtype": "<必填；标量类型。普通浮点算子填 float/double；整数算子(如 gcd/lcm)填 int32_t/int64_t>",
     "input_init": "<C++ 语句：用循环变量 i 填充 h_in0[i]...h_inN[i]；旧别名 h_x/h_y 也可用>",
     "element_op_code": "<C++ 语句：可读 in0_val...inN_val；给 out0_val...outM_val 赋值；旧别名 x_val/y_val/z_val 也可用>",
-    "golden_code": "<C++ 语句：可读 in0_ref...inN_ref；给 expected0...expectedM 赋值；旧别名 x_ref/y_ref/expected 也可用；禁止调用 ascend::std::*>"
+    "golden_code": "<C++ 语句：可读 in0_ref...inN_ref；给 expected0...expectedM 赋值；旧别名 x_ref/y_ref/expected 也可用；禁止调用 asc::std::*>"
   },
   "notes": "<迁移要点、算子形态判断、风险>"
 }

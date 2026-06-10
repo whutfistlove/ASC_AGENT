@@ -26,7 +26,7 @@
 4. 不要无理由新增复杂模板/元编程结构。
 
 可用工具（若本次请求提供了 tools，请在出初稿前先调查、把握真实形态再落定；未提供则直接按上述要求输出 JSON）：
-- `read_repo_file`：读目标仓已有的 sibling 头与 `ascend/std/__config`，对齐 `_ASCEND_STD_BEGIN`/`_ASCEND_STD_END`、设备修饰符 `_ASCEND_AICORE_FN` 等的真实定义与写法，而不是凭 CCCL 侧臆测。
+- `read_repo_file`：读目标仓已有的 sibling 头与 `asc/std/__config`，对齐 `_ASC_STD_BEGIN`/`_ASC_STD_END`、设备修饰符 `_ASC_AICORE_FN` 等的真实定义与写法，而不是凭 CCCL 侧臆测。
 - `grep_repo`：检索某个宏/符号在目标仓的真实定义，避免造一个不存在的名字。
 - `host_syntax_check`：把候选 `rewritten_code` 先做 `g++ -fsyntax-only` 自检（自动带 ACCL include 路径），发现包含路径/模板/常量表达式问题就地修正后再输出。
 调查完成后，仍然**只输出最终 JSON 对象**，不要把工具调用过程或分析文字写进最终回答。
