@@ -40,40 +40,43 @@ cannsim -s Ascend950
 
 ## 2. 常用工作流
 
+> 调用模型的命令默认带 `--show-model-io`：流式实时回显与模型的完整对话（含思考过程
+> reasoning_content）。不想刷屏时去掉该参数即可。
+
 只迁移头文件：
 
 ```bash
-python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
+python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h --show-model-io
 ```
 
 迁移并运行测试：
 
 ```bash
-python3 main.py convert --input <header> --with-tests
+python3 main.py convert --input <header> --with-tests --show-model-io
 ```
 
 迁移、测试、根据失败日志修复并重测：
 
 ```bash
-python3 main.py convert --input <header> --with-tests --test-feedback-to-model
+python3 main.py convert --input <header> --with-tests --test-feedback-to-model --show-model-io
 ```
 
 只准备测试文件，不实际运行：
 
 ```bash
-python3 main.py test --input <header> --prepare-tests-only
+python3 main.py test --input <header> --prepare-tests-only --show-model-io
 ```
 
 没有 CANN/cannsim 时只跑 host 测试：
 
 ```bash
-python3 main.py convert --input <header> --with-tests --host-only
+python3 main.py convert --input <header> --with-tests --host-only --show-model-io
 ```
 
 使用更小规模的 kernel 快速检查：
 
 ```bash
-python3 main.py convert --input <header> --with-tests --kernel-fast
+python3 main.py convert --input <header> --with-tests --kernel-fast --show-model-io
 ```
 
 ## 3. 头文件迁移流程
@@ -103,7 +106,7 @@ examples/headers/os.accl.h
 
 ```text
 repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
-  -> repos/accl/libascendcxx/include/ascend/std/__algorithm/min.h
+  -> repos/accl/asc-stl/include/asc/std/__algorithm/min.h
 ```
 
 ## 4. 测试迁移流程
@@ -112,7 +115,7 @@ repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
 
 - CCCL 头文件；
 - 已生成的 ACCL 头文件；
-- `repos/cccl/libcudacxx/test/std` 下的 CCCL 测试；
+- `repos/cccl/libcudacxx/test/libcudacxx/std` 下的 CCCL 测试；
 - `examples/tests` 下的测试迁移 few-shot 示例。
 
 模型需要返回：
@@ -138,7 +141,7 @@ repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
 host 测试是完整 C++ 文件，写入：
 
 ```text
-repos/accl/libascendcxx/test/libascendcxx/ascend/host/<algo>_tests.cpp
+repos/accl/asc-stl/test/asc-stl/asc/host/<algo>_tests.cpp
 ```
 
 host 测试应该满足：
@@ -146,7 +149,7 @@ host 测试应该满足：
 - include 当前生成的 ACCL 头文件；
 - 不依赖 CANN/ACL；
 - 逐条打印用例，格式类似 `[host][<algo>] ... got ... expected ...`；
-- expected 必须独立计算，不能调用被测的 `ascend::std::<algo>` 作为 golden；
+- expected 必须独立计算，不能调用被测的 `asc::std::<algo>` 作为 golden；
 - 任一用例失败时进程必须返回非零，不能只打印 `FAIL` 后固定 `return 0`。
 
 ## 6. Kernel 测试
@@ -154,7 +157,7 @@ host 测试应该满足：
 kernel 测试生成在：
 
 ```text
-repos/accl/libascendcxx/test/libascendcxx/ascend/kernel/<algo>_example/
+repos/accl/asc-stl/test/asc-stl/asc/kernel/<algo>_example/
 ```
 
 生成文件包括：
@@ -193,7 +196,7 @@ kernel 脚手架支持 1 到 8 个 GM 输入和 1 到 8 个 GM 输出。
 ```json
 { "gm_inputs": 2, "gm_outputs": 1, "dtype": "int64_t",
   "input_init": "h_x[i] = static_cast<int64_t>(i % 50); h_y[i] = static_cast<int64_t>((i * 7) % 50);",
-  "element_op_code": "z_val = ascend::std::gcd(x_val, y_val);",
+  "element_op_code": "z_val = asc::std::gcd(x_val, y_val);",
   "golden_code": "int64_t a=x_ref,b=y_ref; while(b){int64_t t=b;b=a%b;a=t;} expected = a<0?-a:a;" }
 ```
 
@@ -232,7 +235,7 @@ expected == expected0
   "gm_inputs": 2,
   "gm_outputs": 1,
   "input_init": "h_x[i] = static_cast<float>(i); h_y[i] = static_cast<float>(i * 2);",
-  "element_op_code": "z_val = ascend::std::max(x_val, y_val);",
+  "element_op_code": "z_val = asc::std::max(x_val, y_val);",
   "golden_code": "expected = (x_ref < y_ref) ? y_ref : x_ref;"
 }
 ```
@@ -249,7 +252,7 @@ expected == expected0
 }
 ```
 
-`golden_code` 必须是独立参考实现，禁止调用 `ascend::std::*`。
+`golden_code` 必须是独立参考实现，禁止调用 `asc::std::*`。
 
 ## 8. 日志与通过标准
 
@@ -340,7 +343,7 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 | 工具 | 作用 |
 |------|------|
 | `read_repo_file` | 按需读目标仓任意头（如 `__config`、sibling 算子），不必全塞进 prompt |
-| `grep_repo` | 查宏/符号的真实定义（如 `_ASCEND_AICORE_FN`） |
+| `grep_repo` | 查宏/符号的真实定义（如 `_ASC_AICORE_FN`） |
 | `host_syntax_check` | 用 `g++ -fsyntax-only` 先自检 host 产物，省一整轮往返 |
 | `extract_error_lines` | 从数万行日志里只抽 error/warning 行回喂 |
 

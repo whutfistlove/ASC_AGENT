@@ -1,7 +1,7 @@
 # ASC_agent
 
 ASC_agent 是一个面向 **CCCL 到 ACCL** 的迁移与验证助手。它以
-`libcudacxx` 头文件为输入，生成对应的 `libascendcxx` 头文件，并可以继续迁移
+`libcudacxx` 头文件为输入，生成对应的 `asc-stl` 头文件，并可以继续迁移
 算子测试，在 host 侧和 AscendC kernel 仿真侧验证结果。
 
 项目名称统一为 **ASC_agent**。
@@ -20,27 +20,31 @@ ASC_agent 是一个面向 **CCCL 到 ACCL** 的迁移与验证助手。它以
 
 ## 快速命令
 
+> 下列调用模型的命令默认带 `--show-model-io`：流式实时回显与模型的完整对话（含思考过程
+> reasoning_content + 请求 + 原始响应）。不想刷屏时去掉该参数即可。
+> 不调用模型的命令（`selftest` / `make-example` / `dep-graph` / `--plan-only`）无此参数。
+
 ```bash
 # 离线自检，不需要 API key 或 CANN。
 python3 main.py selftest
 
 # 迁移一个 CCCL 头文件并写入 ACCL 目标仓。
-python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
+python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h --show-model-io
 
 # 迁移并运行 host/kernel 测试。
-python3 main.py convert --input <header> --with-tests
+python3 main.py convert --input <header> --with-tests --show-model-io
 
 # 迁移、测试，并根据失败日志自动修复。
-python3 main.py convert --input <header> --with-tests --test-feedback-to-model
+python3 main.py convert --input <header> --with-tests --test-feedback-to-model --show-model-io
 
 # 对已经迁移好的目标生成/运行测试。
-python3 main.py test --input <header>
+python3 main.py test --input <header> --show-model-io
 
 # 把已迁移并验证的算子晋升为 examples/ 金标准示例（不带参数则列出候选）。
 python3 main.py make-example clamp sort3 quad_fanout
 
 # 按依赖闭包迁移一个跨头依赖的算子（叶子优先；先看计划加 --plan-only，真实迁移加 --real-ai）。
-python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai
+python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai --show-model-io
 
 # 只看某入口头的 include 依赖图与迁移顺序。
 python3 main.py dep-graph --cccl-repo repos/cccl
@@ -158,7 +162,7 @@ CCCL 头文件
   ├─ pipeline.py
   │    ├─ 读取 examples/headers 与 skills/rewrite_initial.md
   │    ├─ 调用模型生成 ACCL header
-  │    └─ 写入 repos/accl/libascendcxx/include/ascend/std/...
+  │    └─ 写入 repos/accl/asc-stl/include/asc/std/...
   │
   ├─ test_migrator.py（可选）
   │    ├─ 读取 CCCL 测试、ACCL header、examples/tests
@@ -167,9 +171,9 @@ CCCL 头文件
   │
   ├─ operator_test.py（可选）
   │    ├─ 写入 host 测试：
-  │    │    repos/accl/libascendcxx/test/libascendcxx/ascend/host/<algo>_tests.cpp
+  │    │    repos/accl/asc-stl/test/asc-stl/asc/host/<algo>_tests.cpp
   │    ├─ 生成 kernel 测试目录：
-  │    │    repos/accl/libascendcxx/test/libascendcxx/ascend/kernel/<algo>_example/
+  │    │    repos/accl/asc-stl/test/asc-stl/asc/kernel/<algo>_example/
   │    ├─ build_env 自愈：清过期 CMake 缓存 / 补 CANN 工具 PATH
   │    ├─ 缺 cannsim → kernel 标 SKIPPED（不计失败）
   │    ├─ 运行 host C++ 测试（经生成的 run_host_test.sh）
@@ -211,7 +215,7 @@ kernel 脚手架支持 1 到 8 个 GM 输入、1 到 8 个 GM 输出。旧的单
 `dtype`（可选，默认 `float`）决定整条标量流水线的类型：浮点用 `float` / `double`（容差比对），
 整数算子（`gcd` / `lcm`）用 `int32_t` / `int64_t`（精确相等比对）。
 
-`golden_code` 必须是**独立**参考实现（禁止调用被测的 `ascend::std::*`）；kernel 的通过判定
+`golden_code` 必须是**独立**参考实现（禁止调用被测的 `asc::std::*`）；kernel 的通过判定
 以仿真日志 `cannsim.log` 里真实的逐元素 golden 校验为准（命中 `verification passed.`
 且无 `Mismatch`），而非 cannsim 录制是否成功。没有 `kernel_spec` 时只做 build+launch
 冒烟（输出 `SMOKE`，不计为语义通过）。
@@ -300,8 +304,28 @@ python3 main.py make-example --all --overwrite     # 全量刷新
 # 先看计划（不调模型、不写盘）
 python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --plan-only
 # 真实迁移整条闭包并写入 ACCL
-python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai
+python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai --show-model-io
+
+# 一条命令：按依赖闭包 leaf-first 改写，并紧跟每个算子跑 host + kernel 测试。
+# 默认「失败即停」（某算子测试失败则不再改写其依赖方）；加 --continue-on-test-failure 改为记录并继续。
+python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl \
+    --real-ai --with-tests --test-feedback-to-model --show-model-io
 ```
+
+**从零开始**：闭包会跳过目标仓已存在的算子头，因此真正"从头跑"前需先清空已迁移的算子头
+（只删模型迁移的 `*.h`，**保留**手写的 `__config` 与无扩展名的伞头 `algorithm/numeric/...`）：
+
+```bash
+# 清空已迁移算子头（可随时 git restore 恢复）
+find repos/accl/asc-stl/include/asc/std -name '*.h' -delete
+# 如需连同已生成的测试一起重置，给迁移命令加 --overwrite-tests 即可（无需手删 test/）
+```
+
+`--with-tests` 复用与 `convert` 完全相同的测试机制：每个算子改写后立即迁移并执行 host/kernel 测试，
+可选 `--test-feedback-to-model` 在失败时回灌模型修复；`--host-only` / `--kernel-only` / `--kernel-fast`
+等测试参数同样可用。每个算子的测试结果写入闭包报告（`outputs/dependency_convert_report.json` 的
+`items[].test_result` 与顶层 `failed_test_headers`）。
+> 环境类失败（无 `cannsim`、缺驱动等）与 prepare/dry-run 一律不计为失败，不会在开发机上误停整条闭包。
 
 仓内自带一条验证该能力的依赖链测试用例：`__numeric/spread3.h → range_width.h → abs_diff.h`
 （叶子优先序 `max, min, abs_diff, range_width, spread3`），实测闭包迁移 + host + kernel 仿真均通过。

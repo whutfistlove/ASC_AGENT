@@ -30,8 +30,8 @@
 于是凡是**跨头依赖**的算子，kernel 侧一编译就断在缺失的依赖上。实测案例（`minmax`）：
 
 ```
-minmax.h:10:10: fatal error: 'ascend/std/__utility/pair.h' file not found
-        #include "ascend/std/__utility/pair.h"
+minmax.h:10:10: fatal error: 'asc/std/__utility/pair.h' file not found
+        #include "asc/std/__utility/pair.h"
 ```
 
 `minmax` 依赖 `pair`，而 `__utility/pair.h` 从未被迁移。该算子只是“恰好”被改成了
@@ -39,7 +39,7 @@ minmax.h:10:10: fatal error: 'ascend/std/__utility/pair.h' file not found
 `__config` 之外其它公共头的算子，这条路会持续踩坑。
 
 > 注：host 侧有时能过，是因为 host 构建用的是仓库完整 include 树；kernel 构建走的是
-> `run_test.sh` 里 `ascend -> include/ascend` 的符号链接子集，缺哪个依赖就直接断。
+> `run_test.sh` 里 `ascend -> include/asc` 的符号链接子集，缺哪个依赖就直接断。
 > 两侧 include 解析口径不一致，会放大这个问题。
 
 ### 目标
@@ -56,7 +56,7 @@ minmax.h:10:10: fatal error: 'ascend/std/__utility/pair.h' file not found
    - 产出拓扑序（叶子优先）。
 2. **批量迁移编排（扩展 `core/pipeline.py`）**
    - 入口头触发时，先迁移其依赖闭包（叶子→根），每个头复用现有 `_rewrite` 流程；
-   - 路径/guard 仍由 `path_mapper` 推导（`__utility/pair.h` → `ascend/std/__utility/pair.h`），
+   - 路径/guard 仍由 `path_mapper` 推导（`__utility/pair.h` → `asc/std/__utility/pair.h`），
      段替换规则沿用 `segment_substitutions`。
    - 已迁移过的头跳过（按 `target_relpath` 去重），避免重复调用模型。
 3. **迁移产物自洽校验（扩展 `core/operator_test.py` 或新增 `verify_includes`）**
@@ -73,7 +73,7 @@ minmax.h:10:10: fatal error: 'ascend/std/__utility/pair.h' file not found
 ### 验收
 
 - 对 `minmax`（依赖 `pair`）：不内联 `pair`，而是自动迁移出 `__utility/pair.h`，
-  kernel 侧 `#include "ascend/std/__utility/pair.h"` 能解析、能编译、能过 cannsim。
+  kernel 侧 `#include "asc/std/__utility/pair.h"` 能解析、能编译、能过 cannsim。
 - 增补单测：构造一个“A 依赖 B 依赖 C”的 mock 头三元组，断言迁移顺序为 C→B→A 且产物齐全。
 
 ### 影响面 / 风险
