@@ -1,8 +1,0 @@
-{
-  "gm_inputs": 2,
-  "gm_outputs": 1,
-  "dtype": "int32_t",
-  "input_init": "h_in0[i] = static_cast<int32_t>((static_cast<int32_t>(i % 19)) - 9); h_in1[i] = static_cast<int32_t>((static_cast<int32_t>((i * 7) % 23)) - 11);",
-  "element_op_code": "z_val = ascend::std::lcm(x_val, y_val);",
-  "golden_code": "int32_t a0 = x_ref; int32_t b0 = y_ref; if (a0 == 0 || b0 == 0) { expected = 0; } else { int32_t a = a0 < 0 ? -a0 : a0; int32_t b = b0 < 0 ? -b0 : b0; int32_t g0 = a; int32_t g1 = b; while (g1 != 0) { int32_t t = static_cast<int32_t>(g0 % g1); g0 = g1; g1 = t; } expected = static_cast<int32_t>((a / g0) * b); }"
-}

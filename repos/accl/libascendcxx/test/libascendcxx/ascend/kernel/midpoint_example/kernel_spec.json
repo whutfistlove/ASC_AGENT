@@ -1,8 +1,0 @@
-{
-  "gm_inputs": 2,
-  "gm_outputs": 1,
-  "dtype": "int32_t",
-  "input_init": "if (i % 4 == 0) { h_in0[i] = INT32_MIN; h_in1[i] = INT32_MAX; } else if (i % 4 == 1) { h_in0[i] = INT32_MAX; h_in1[i] = INT32_MIN; } else { h_in0[i] = static_cast<int32_t>((static_cast<int32_t>(i % 97)) - 48); h_in1[i] = static_cast<int32_t>((static_cast<int32_t>((i * 3) % 101)) - 50); }",
-  "element_op_code": "z_val = ascend::std::midpoint(x_val, y_val);",
-  "golden_code": "int64_t a = static_cast<int64_t>(x_ref); int64_t b = static_cast<int64_t>(y_ref); expected = static_cast<int32_t>(a + (b - a) / 2);"
-}

@@ -1,8 +1,0 @@
-#ifndef ASCEND_STD_NUMERIC
-#define ASCEND_STD_NUMERIC
-
-#include "ascend/std/__numeric/gcd.h"
-#include "ascend/std/__numeric/lcm.h"
-#include "ascend/std/__numeric/midpoint.h"
-
-#endif  // ASCEND_STD_NUMERIC

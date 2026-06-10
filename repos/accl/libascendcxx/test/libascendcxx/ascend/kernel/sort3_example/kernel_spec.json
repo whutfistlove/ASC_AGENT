@@ -1,8 +1,0 @@
-{
-  "input_init": "h_in0[i] = static_cast<int32_t>((i * 7 + 3) % 19) - 9; h_in1[i] = static_cast<int32_t>((i * 13 + 5) % 23) - 11; h_in2[i] = static_cast<int32_t>((i * 11 + 1) % 17) - 8;",
-  "element_op_code": "ascend::std::sort3(in0_val, in1_val, in2_val, out0_val, out1_val, out2_val);",
-  "golden_code": "int32_t _a = in0_ref, _b = in1_ref, _c = in2_ref; if (_b < _a) { int32_t _t = _a; _a = _b; _b = _t; } if (_c < _a) { int32_t _t = _a; _a = _c; _c = _t; } if (_c < _b) { int32_t _t = _b; _b = _c; _c = _t; } expected0 = _a; expected1 = _b; expected2 = _c;",
-  "gm_inputs": 3,
-  "gm_outputs": 3,
-  "dtype": "int32_t"
-}

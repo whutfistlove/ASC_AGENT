@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>(i % 97) - 40.0f; h_in1[i] = static_cast<float>((i * 3) % 97) - 50.0f;",
+  "element_op_code": "out0_val = asc::std::min(in0_val, in1_val);",
+  "golden_code": "expected0 = (in1_ref < in0_ref) ? in1_ref : in0_ref;",
+  "gm_inputs": 2,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

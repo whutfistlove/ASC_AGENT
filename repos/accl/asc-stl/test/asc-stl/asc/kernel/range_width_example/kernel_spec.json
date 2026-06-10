@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>(i % 11) - 5.0f; h_in1[i] = static_cast<float>((i * 3) % 13) - 6.0f; h_in2[i] = static_cast<float>((i * 7) % 17) - 8.0f;",
+  "element_op_code": "out0_val = asc::std::range_width(in0_val, in1_val, in2_val);",
+  "golden_code": "float mx = in0_ref; if (in1_ref > mx) mx = in1_ref; if (in2_ref > mx) mx = in2_ref; float mn = in0_ref; if (in1_ref < mn) mn = in1_ref; if (in2_ref < mn) mn = in2_ref; expected0 = mx - mn;",
+  "gm_inputs": 3,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

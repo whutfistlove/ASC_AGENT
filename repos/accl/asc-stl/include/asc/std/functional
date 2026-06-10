@@ -1,0 +1,7 @@
+#ifndef ASC_STD_FUNCTIONAL
+#define ASC_STD_FUNCTIONAL
+
+#include "asc/std/__functional/identity.h"
+#include "asc/std/__functional/operations.h"
+
+#endif  // ASC_STD_FUNCTIONAL

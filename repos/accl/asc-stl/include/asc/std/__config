@@ -1,0 +1,83 @@
+/******************************************************************************
+ * Copyright (c) 2025 AISS Group at Harbin Institute of Technology. All Rights Reserved.
+ * Author: Luxiongbo <luxiongbo@whut.edu.cn>
+ * Create: 2026-01-18
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *****************************************************************************/
+
+#ifndef ASC_STD___CONFIG
+#define ASC_STD___CONFIG
+
+// Compiler detection
+#if defined(__CCE__)
+#define _ASC_COMPILER_CCE
+#elif defined(__clang__)
+#define _ASC_COMPILER_CLANG
+#elif defined(__GNUC__)
+#define _ASC_COMPILER_GCC
+#elif defined(_MSC_VER)
+#define _ASC_COMPILER_MSVC
+#endif
+
+// Platform: Ascend (typically aarch64 + ASCEND env).
+// __ASCEND__ / ASCEND_PLATFORM are toolchain-provided detection inputs and are
+// intentionally NOT renamed.
+#if defined(__aarch64__) && (defined(__ASCEND__) || defined(ASCEND_PLATFORM))
+#define _ASC_PLATFORM 1
+#endif
+
+// === Function annotation for different execution units ===
+
+// For general "host/device" functions (e.g., in unified code) — currently unused in kernel
+#if defined(_ASC_COMPILER_CCE)
+// Note: __attribute__((device)) is not sufficient for AI Core functions.
+// We keep this for potential future use, but prefer explicit __aicore__/__aiv__.
+#define _ASC_HOST_DEVICE __attribute__((device))
+#else
+#define _ASC_HOST_DEVICE
+#endif
+
+// === Critical: AI Core (vector core) function marker ===
+// Must be used for any function called from __aicore__ kernel code.
+#if defined(_ASC_COMPILER_CCE)
+#define _ASC_AICORE_FN __aicore__ inline
+#else
+// On host compilers, __aicore__ is unknown → define as empty
+#define _ASC_AICORE_FN inline
+#endif
+
+// === Optional: AIV (scalar core) function marker (for control logic) ===
+#if defined(_ASC_COMPILER_CCE)
+#define _ASC_AIV_FN __aiv__ inline
+#else
+#define _ASC_AIV_FN inline
+#endif
+
+// Disable exceptions in device code (optional but common)
+#ifndef _ASC_STD_NO_EXCEPTIONS
+#define _ASC_STD_NO_EXCEPTIONS 1
+#endif
+
+// Namespace alias
+#define _ASC_STD asc::std
+
+// Namespace control macros
+#define _ASC_STD_BEGIN \
+    namespace asc {    \
+    namespace std {
+#define _ASC_STD_END \
+    }                \
+    }
+
+#endif // ASC_STD___CONFIG

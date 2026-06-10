@@ -1,0 +1,10 @@
+#ifndef ASC_STD_TYPE_TRAITS
+#define ASC_STD_TYPE_TRAITS
+
+#include "asc/std/__type_traits/conditional.h"
+#include "asc/std/__type_traits/integral_constant.h"
+#include "asc/std/__type_traits/is_reference.h"
+#include "asc/std/__type_traits/is_same.h"
+#include "asc/std/__type_traits/remove_reference.h"
+
+#endif  // ASC_STD_TYPE_TRAITS

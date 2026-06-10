@@ -1,0 +1,8 @@
+{
+  "gm_inputs": 2,
+  "gm_outputs": 1,
+  "dtype": "int32_t",
+  "input_init": "h_in0[i] = static_cast<int32_t>((static_cast<int32_t>(i % 37)) - 18); h_in1[i] = static_cast<int32_t>((static_cast<int32_t>((i * 5) % 41)) - 20);",
+  "element_op_code": "z_val = asc::std::gcd(x_val, y_val);",
+  "golden_code": "int32_t a = x_ref; int32_t b = y_ref; if (a < 0) { a = -a; } if (b < 0) { b = -b; } while (b != 0) { int32_t t = static_cast<int32_t>(a % b); a = b; b = t; } expected = a;"
+}

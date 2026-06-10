@@ -1,9 +1,0 @@
-#ifndef ASCEND_STD_UTILITY
-#define ASCEND_STD_UTILITY
-
-#include "ascend/std/__utility/forward.h"
-#include "ascend/std/__utility/move.h"
-#include "ascend/std/__utility/pair.h"
-#include "ascend/std/__utility/swap.h"
-
-#endif  // ASCEND_STD_UTILITY

@@ -1,8 +1,0 @@
-{
-  "input_init": "h_x[i] = static_cast<float>(i % 97) - 40.0f; h_y[i] = static_cast<float>((i * 3) % 97) - 50.0f;",
-  "element_op_code": "z_val = ascend::std::min(x_val, y_val);",
-  "golden_code": "expected = (y_ref < x_ref) ? y_ref : x_ref;",
-  "gm_inputs": 2,
-  "gm_outputs": 1,
-  "dtype": "float"
-}

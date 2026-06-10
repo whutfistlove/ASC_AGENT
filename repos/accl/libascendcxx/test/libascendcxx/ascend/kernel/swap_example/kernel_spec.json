@@ -1,6 +1,0 @@
-{
-  "input_init": "h_x[i] = static_cast<float>(i % 100) - 50.0f; h_y[i] = static_cast<float>((i * 7 + 13) % 100) - 50.0f;",
-  "element_op_code": "float a = x_val; float b = y_val; ascend::std::swap(a, b); z_val = a;",
-  "golden_code": "expected = y_ref;",
-  "gm_inputs": 2
-}
