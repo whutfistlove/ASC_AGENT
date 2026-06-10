@@ -1,4 +1,4 @@
-#include "ascend/std/__algorithm/quad_fanout.h"
+#include "asc/std/__algorithm/quad_fanout.h"
 #include <iostream>
 
 static int g_failures = 0;
@@ -17,7 +17,7 @@ int main()
     {
         int a = 1, b = 2, c = 3, d = 4;
         int out0 = 0, out1 = 0, out2 = 0, out3 = 0, out4 = 0;
-        ascend::std::quad_fanout(a, b, c, d, out0, out1, out2, out3, out4);
+        asc::std::quad_fanout(a, b, c, d, out0, out1, out2, out3, out4);
         expect_eq("quad_fanout(1,2,3,4) -> out0", out0, 3);
         expect_eq("quad_fanout(1,2,3,4) -> out1", out1, 5);
         expect_eq("quad_fanout(1,2,3,4) -> out2", out2, 7);
@@ -28,7 +28,7 @@ int main()
     {
         float a = 1.5f, b = -2.0f, c = 4.0f, d = 8.0f;
         float out0 = 0.0f, out1 = 0.0f, out2 = 0.0f, out3 = 0.0f, out4 = 0.0f;
-        ascend::std::quad_fanout(a, b, c, d, out0, out1, out2, out3, out4);
+        asc::std::quad_fanout(a, b, c, d, out0, out1, out2, out3, out4);
         expect_eq("quad_fanout(1.5,-2,4,8) -> out0", out0, -0.5f);
         expect_eq("quad_fanout(1.5,-2,4,8) -> out1", out1, 2.0f);
         expect_eq("quad_fanout(1.5,-2,4,8) -> out2", out2, 12.0f);

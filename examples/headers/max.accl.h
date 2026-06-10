@@ -16,44 +16,44 @@
  * limitations under the License.
  *****************************************************************************/
 
-#ifndef LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_MAX_H_
-#define LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_MAX_H_
+#ifndef ASC_STL_INCLUDE_ASC_STD___ALGORITHM_MAX_H_
+#define ASC_STL_INCLUDE_ASC_STD___ALGORITHM_MAX_H_
 
-#include "ascend/std/__config"
+#include "asc/std/__config"
 
 #if defined(__CCE__)
-#define ASCEND_DEVICE_CODE
+#define ASC_DEVICE_CODE
 #endif
 
-_ASCEND_STD_BEGIN
+_ASC_STD_BEGIN
 
 // Primary template using std::less
 template <typename _Tp>
-_ASCEND_AICORE_FN constexpr const _Tp& max(const _Tp& __a, const _Tp& __b) {
+_ASC_AICORE_FN constexpr const _Tp& max(const _Tp& __a, const _Tp& __b) {
     return (__a < __b) ? __b : __a;
 }
 
 template <typename _Tp, typename _Compare>
 // NOLINTNEXTLINE
-_ASCEND_AICORE_FN constexpr const _Tp& max(const _Tp& __a, const _Tp& __b, _Compare __comp) {
+_ASC_AICORE_FN constexpr const _Tp& max(const _Tp& __a, const _Tp& __b, _Compare __comp) {
     return __comp(__b, __a) ? __a : __b;
 }
 
 // todo
 // // Initializer list version (C++11+)
 // template <typename _Tp>
-// _ASCEND_AICORE_FN constexpr _Tp max(::std::initializer_list<_Tp> __il)
+// _ASC_AICORE_FN constexpr _Tp max(::std::initializer_list<_Tp> __il)
 // {
 //     return *::std::max_element(__il.begin(), __il.end());
 // }
 
 // // Initializer list with comparator
 // template <typename _Tp, typename _Compare>
-// _ASCEND_AICORE_FN constexpr _Tp max(::std::initializer_list<_Tp> __il, _Compare __comp)
+// _ASC_AICORE_FN constexpr _Tp max(::std::initializer_list<_Tp> __il, _Compare __comp)
 // {
 //     return *::std::max_element(__il.begin(), __il.end(), __comp);
 // }
 
-_ASCEND_STD_END
+_ASC_STD_END
 
-#endif  // LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_MAX_H_
+#endif  // ASC_STL_INCLUDE_ASC_STD___ALGORITHM_MAX_H_

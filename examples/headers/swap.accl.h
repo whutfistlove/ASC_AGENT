@@ -1,29 +1,29 @@
-#ifndef LIBASCENDCXX_INCLUDE_ASCEND_STD___UTILITY_SWAP_H_
-#define LIBASCENDCXX_INCLUDE_ASCEND_STD___UTILITY_SWAP_H_
+#ifndef ASC_STL_INCLUDE_ASC_STD___UTILITY_SWAP_H_
+#define ASC_STL_INCLUDE_ASC_STD___UTILITY_SWAP_H_
 
 #include <cstddef>
-#include "ascend/std/__config"
-#include "ascend/std/__utility/move.h"
+#include "asc/std/__config"
+#include "asc/std/__utility/move.h"
 
-_ASCEND_STD_BEGIN
+_ASC_STD_BEGIN
 
 template <typename _Tp>
-_ASCEND_AICORE_FN constexpr void swap(_Tp& __a, _Tp& __b) noexcept
+_ASC_AICORE_FN constexpr void swap(_Tp& __a, _Tp& __b) noexcept
 {
-  _Tp __tmp(ascend::std::move(__a));
-  __a = ascend::std::move(__b);
-  __b = ascend::std::move(__tmp);
+  _Tp __tmp(asc::std::move(__a));
+  __a = asc::std::move(__b);
+  __b = asc::std::move(__tmp);
 }
 
 template <typename _Tp, size_t _Np>
-_ASCEND_AICORE_FN constexpr void swap(_Tp (&__a)[_Np], _Tp (&__b)[_Np]) noexcept
+_ASC_AICORE_FN constexpr void swap(_Tp (&__a)[_Np], _Tp (&__b)[_Np]) noexcept
 {
   for (size_t __i = 0; __i < _Np; ++__i)
   {
-    ascend::std::swap(__a[__i], __b[__i]);
+    asc::std::swap(__a[__i], __b[__i]);
   }
 }
 
-_ASCEND_STD_END
+_ASC_STD_END
 
-#endif  // LIBASCENDCXX_INCLUDE_ASCEND_STD___UTILITY_SWAP_H_
+#endif  // ASC_STL_INCLUDE_ASC_STD___UTILITY_SWAP_H_

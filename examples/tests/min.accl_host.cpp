@@ -2,8 +2,8 @@
 //
 // min is a binary value-returning op (returns the smaller of a, b).
 // The test compares the result to an INDEPENDENT expected value,
-// never to ascend::std::min again.
-#include "ascend/std/__algorithm/min.h"
+// never to asc::std::min again.
+#include "asc/std/__algorithm/min.h"
 #include <iostream>
 
 static int g_failures = 0;
@@ -27,23 +27,23 @@ static void expect_true(const char* expr, bool cond)
 int main()
 {
     // Basic ordering on integers and floats
-    expect_eq("min(1, 2)", ascend::std::min(1, 2), 1);
-    expect_eq("min(2, 1)", ascend::std::min(2, 1), 1);
-    expect_eq("min(5.0f, 3.0f)", ascend::std::min(5.0f, 3.0f), 3.0f);
-    expect_eq("min(-4, -9)", ascend::std::min(-4, -9), -9);
+    expect_eq("min(1, 2)", asc::std::min(1, 2), 1);
+    expect_eq("min(2, 1)", asc::std::min(2, 1), 1);
+    expect_eq("min(5.0f, 3.0f)", asc::std::min(5.0f, 3.0f), 3.0f);
+    expect_eq("min(-4, -9)", asc::std::min(-4, -9), -9);
 
     // Equal values: the first argument is returned (by reference)
     {
         int a = 7;
         int b = 7;
-        expect_true("&min(a, b) == &a (equal values)", &ascend::std::min(a, b) == &a);
+        expect_true("&min(a, b) == &a (equal values)", &asc::std::min(a, b) == &a);
     }
 
     // Custom comparator (plain operator< wrapped in a lambda)
     {
         auto comp = [](int x, int y) { return x < y; };
-        expect_eq("min(10, 20, comp)", ascend::std::min(10, 20, comp), 10);
-        expect_eq("min(20, 10, comp)", ascend::std::min(20, 10, comp), 10);
+        expect_eq("min(10, 20, comp)", asc::std::min(10, 20, comp), 10);
+        expect_eq("min(20, 10, comp)", asc::std::min(20, 10, comp), 10);
     }
 
     return g_failures == 0 ? 0 : 1;

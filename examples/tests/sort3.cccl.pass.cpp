@@ -22,7 +22,7 @@
 // h_in0..h_in2, out0_val..out2_val and expected0..expected2, and -- because the
 // integer cases below demand exact ordering -- pick dtype=int32_t. The golden
 // must be INDEPENDENT (e.g. ternary min/max plus mid = sum - lo - hi), never a
-// second call into ascend::std::sort3.
+// second call into asc::std::sort3.
 
 #include <cuda/std/__algorithm/sort3.h>
 #include <cassert>
