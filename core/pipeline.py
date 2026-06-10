@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from core.agent_tools import build_toolbox
 from core.best_of_n import best_of_n, score_header_code
@@ -83,6 +83,7 @@ class DependencyAwareHeaderResult:
     reason: str = ""
     status: str = ""
     run_result: dict = field(default_factory=dict)
+    test_result: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -94,6 +95,7 @@ class DependencyAwareRunResult:
     ordered_headers: list[str] = field(default_factory=list)
     rewritten_headers: list[str] = field(default_factory=list)
     skipped_headers: list[str] = field(default_factory=list)
+    failed_test_headers: list[str] = field(default_factory=list)
     items: list[DependencyAwareHeaderResult] = field(default_factory=list)
     complete: bool = False
     error: str = ""
@@ -107,6 +109,7 @@ class DependencyAwareRunResult:
             "ordered_headers": list(self.ordered_headers),
             "rewritten_headers": list(self.rewritten_headers),
             "skipped_headers": list(self.skipped_headers),
+            "failed_test_headers": list(self.failed_test_headers),
         }
 
 
@@ -331,6 +334,8 @@ class Pipeline:
         write_to_repo: bool = True,
         skip_statuses: Optional[set[str]] = None,
         plan_only: bool = False,
+        on_rewritten: Optional[Callable[[RunResult], tuple[bool, dict]]] = None,
+        stop_on_test_failure: bool = True,
     ) -> DependencyAwareRunResult:
         """Rewrite one entry header after its missing dependency closure.
 
@@ -339,6 +344,13 @@ class Pipeline:
         skipped. Every actual rewrite receives a fresh Node 11 context pack for
         the header being rewritten. With `plan_only=True`, this only reports the
         ordered skip/rewrite plan and performs no model calls or writes.
+
+        If `on_rewritten` is given, it is invoked right after each header is
+        rewritten (leaf-first), receiving that header's `RunResult` and returning
+        `(is_failure, test_result)`. The `test_result` is attached to the report
+        item; when `is_failure` is true the header is recorded in
+        `failed_test_headers`, and if `stop_on_test_failure` is true the closure
+        stops before rewriting any dependents.
         """
         skip_statuses = set(skip_statuses or SAFE_DEPENDENCY_SKIP_STATUSES)
         result = DependencyAwareRunResult(entry_header=entry_header)
@@ -433,6 +445,20 @@ class Pipeline:
                 )
                 result.items.append(item)
                 result.rewritten_headers.append(header)
+                if on_rewritten is not None:
+                    try:
+                        is_failure, test_result = on_rewritten(run_result)
+                    except Exception as cb_exc:  # 测试回调自身异常不应伪装成改写失败
+                        is_failure = True
+                        test_result = {"error": f"on_rewritten failed: {type(cb_exc).__name__}: {cb_exc}"}
+                        self._log(f"[test-error] {header}: {test_result['error']}")
+                    item.test_result = test_result or {}
+                    if is_failure:
+                        result.failed_test_headers.append(header)
+                        if stop_on_test_failure:
+                            result.error = f"{header}: host/kernel 测试失败（默认失败即停）"
+                            self._log(f"[test-fail] {result.error}")
+                            return result
             except Exception as exc:
                 run_result.error = f"{type(exc).__name__}: {exc}"
                 item = DependencyAwareHeaderResult(

@@ -185,7 +185,7 @@ def _host_test_file_for(config: Config, target_relpath: str) -> Path:
     algo = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
     return (
         Path(config.target_repo)
-        / "libascendcxx" / "test" / "libascendcxx" / "ascend" / "host"
+        / "asc-stl" / "test" / "asc-stl" / "asc" / "host"
         / f"{algo}_tests.cpp"
     )
 
@@ -1267,14 +1267,48 @@ def cmd_dependency_convert(args) -> int:
         show_model_io=getattr(args, "show_model_io", False),
         toolbox=None if args.plan_only else _maybe_build_toolbox(config),
     )
+
+    write_to_repo = not args.no_write_target
+    on_rewritten = None
+    run_tests = getattr(args, "with_tests", False) and not args.plan_only
+    if run_tests:
+        run_host, run_kernel = _resolve_test_selection(args)
+
+        def on_rewritten(run_result):
+            """紧跟每次 leaf-first 改写：迁移并跑该算子的 host/kernel 测试。
+
+            返回 (is_failure, test_result)。环境类失败（无 cannsim/缺驱动等）与
+            prepare/dry-run/skip 一律不计为失败，避免在开发机上误停整条闭包。
+            """
+            # _run_convert_test_loop 经 args.input 推导 CCCL 测试与目标头。
+            setattr(args, "input", run_result.input_path)
+            test_result = _run_convert_test_loop(
+                args, config, model_client, run_result, write_to_repo
+            )
+            passed = _tests_all_passed(
+                test_result, run_host, run_kernel, test_dry_run=args.test_dry_run
+            )
+            inconclusive = (
+                args.prepare_tests_only
+                or bool(test_result.get("skipped"))
+                or _is_env_blocked(test_result)
+            )
+            is_failure = (not passed) and (not inconclusive)
+            verdict = "FAIL" if is_failure else ("PASS" if passed else "INCONCLUSIVE")
+            if not args.quiet:
+                print(f"[test] {run_result.target_relpath}: {verdict}")
+            return is_failure, test_result
+
     result = pipeline.convert_dependency_closure(
         entry_header=args.entry_header,
         inventory=inventory,
         test_index=test_index,
         dep_graph=dep_graph,
         status_report=status_report,
-        write_to_repo=not args.no_write_target,
+        write_to_repo=write_to_repo,
         plan_only=args.plan_only,
+        on_rewritten=on_rewritten,
+        stop_on_test_failure=not getattr(args, "continue_on_test_failure", False),
     )
     report_path = write_dependency_convert_report(config, result, args.output)
 
@@ -1285,11 +1319,16 @@ def cmd_dependency_convert(args) -> int:
     print(f"ordered_headers: {len(result.ordered_headers)}")
     print(f"skipped_headers: {len(result.skipped_headers)}")
     print(f"rewritten_headers: {len(result.rewritten_headers)}")
+    if run_tests:
+        tested = sum(1 for it in result.items if it.action == "rewritten")
+        print(f"tested_headers: {tested}")
+        print(f"failed_test_headers: {len(result.failed_test_headers)}"
+              + (f" -> {', '.join(result.failed_test_headers)}" if result.failed_test_headers else ""))
     print(f"complete: {result.complete}")
     if result.error:
         print(f"error: {result.error}")
     print(f"report: {report_path}")
-    return 2 if result.error else 0
+    return 2 if (result.error or result.failed_test_headers) else 0
 
 
 # --------------------------------------------------------------------------- #
@@ -1382,7 +1421,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_test = sub.add_parser("test", help="为指定算子生成并执行 host/kernel 测试")
     p_test.add_argument("--input", help="原始 CCCL 文件路径（用于自动推导 target_relpath）")
-    p_test.add_argument("--target-relpath", help="直接指定目标相对路径（如 libascendcxx/include/ascend/std/__algorithm/max.h）")
+    p_test.add_argument("--target-relpath", help="直接指定目标相对路径（如 asc-stl/include/asc/std/__algorithm/max.h）")
     p_test.add_argument("--quiet", action="store_true", help="减少日志输出")
     p_test.add_argument("--mock", action="store_true", help=argparse.SUPPRESS)
     p_test.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
@@ -1593,6 +1632,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--show-model-io",
         action="store_true",
         help="实际 rewrite 时打印与模型的完整对话",
+    )
+    # 闭包改写后逐个算子跑 host/kernel 测试（leaf-first，紧跟每次 rewrite）。
+    add_test_flags(p_dep_convert)
+    p_dep_convert.add_argument(
+        "--max-fix-rounds", type=int, default=0,
+        help="配合 --test-feedback-to-model：单个算子测试失败回灌模型的最大修复轮数（0=取 retry.max_fix_rounds）",
+    )
+    p_dep_convert.add_argument(
+        "--continue-on-test-failure",
+        action="store_true",
+        help="某算子 host/kernel 测试失败时仍继续改写/测试后续算子（默认失败即停）",
     )
     p_dep_convert.set_defaults(func=cmd_dependency_convert)
 

@@ -80,9 +80,9 @@ def _seed_cccl_support_boundary(tmp_path) -> Path:
 def _write_safe_target_and_ledger(tmp_path, cfg: Config) -> Path:
     target_file = (
         Path(cfg.target_repo)
-        / "libascendcxx"
+        / "asc-stl"
         / "include"
-        / "ascend"
+        / "asc"
         / "std"
         / "__fixture"
         / "c.h"
@@ -105,7 +105,7 @@ def _write_safe_target_and_ledger(tmp_path, cfg: Config) -> Path:
 
 
 def _write_bootstrap_config(cfg: Config) -> None:
-    target_file = Path(cfg.target_repo) / "libascendcxx/include/ascend/std/__config"
+    target_file = Path(cfg.target_repo) / "asc-stl/include/asc/std/__config"
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text("// hand-authored config\n", encoding="utf-8")
 
@@ -161,7 +161,7 @@ def test_dependency_aware_convert_rewrites_leaf_first_order(tmp_path):
     assert _context_entries(model) == ["__fixture/c.h", "__fixture/b.h", "__fixture/a.h"]
     assert (
         Path(cfg.target_repo)
-        / "libascendcxx/include/ascend/std/__fixture/a.h"
+        / "asc-stl/include/asc/std/__fixture/a.h"
     ).exists()
 
 
@@ -216,8 +216,69 @@ def test_dependency_aware_plan_only_does_not_call_model_or_write_targets(tmp_pat
     assert model.calls == []
     assert not (
         Path(cfg.target_repo)
-        / "libascendcxx/include/ascend/std/__fixture/a.h"
+        / "asc-stl/include/asc/std/__fixture/a.h"
     ).exists()
+
+
+def test_dependency_aware_on_rewritten_stops_on_test_failure(tmp_path):
+    """默认失败即停：leaf c.h 测试失败时，不再改写其依赖方 b.h / a.h。"""
+    cfg = _make_config(tmp_path)
+    cccl = _seed_cccl_abc(tmp_path)
+    inventory, test_index, dep_graph, status = _reports(cccl, cfg)
+    model = MockModelClient()
+    pipeline = Pipeline(cfg, model, verifier=None, verbose=False)
+
+    seen: list[str] = []
+
+    def on_rewritten(run_result):
+        seen.append(run_result.target_relpath)
+        is_failure = run_result.target_relpath.endswith("__fixture/c.h")
+        return is_failure, {"host_passed": not is_failure, "kernel_passed": not is_failure}
+
+    result = pipeline.convert_dependency_closure(
+        entry_header="__fixture/a.h",
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status,
+        on_rewritten=on_rewritten,
+    )
+
+    # c.h 先被改写并测试，失败后即停：b.h / a.h 不再被触碰。
+    assert result.complete is False
+    assert result.rewritten_headers == ["__fixture/c.h"]
+    assert result.failed_test_headers == ["__fixture/c.h"]
+    assert len(seen) == 1 and seen[0].endswith("__fixture/c.h")
+    assert "__fixture/c.h" in result.error
+    c_item = next(it for it in result.items if it.source_header == "__fixture/c.h")
+    assert c_item.test_result == {"host_passed": False, "kernel_passed": False}
+
+
+def test_dependency_aware_on_rewritten_continue_on_failure(tmp_path):
+    """--continue-on-test-failure：c.h 失败仍继续改写并测试 b.h / a.h。"""
+    cfg = _make_config(tmp_path)
+    cccl = _seed_cccl_abc(tmp_path)
+    inventory, test_index, dep_graph, status = _reports(cccl, cfg)
+    model = MockModelClient()
+    pipeline = Pipeline(cfg, model, verifier=None, verbose=False)
+
+    def on_rewritten(run_result):
+        is_failure = run_result.target_relpath.endswith("__fixture/c.h")
+        return is_failure, {"host_passed": not is_failure}
+
+    result = pipeline.convert_dependency_closure(
+        entry_header="__fixture/a.h",
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status,
+        on_rewritten=on_rewritten,
+        stop_on_test_failure=False,
+    )
+
+    assert result.complete is True
+    assert result.rewritten_headers == ["__fixture/c.h", "__fixture/b.h", "__fixture/a.h"]
+    assert result.failed_test_headers == ["__fixture/c.h"]
 
 
 def test_dependency_aware_plan_defers_support_surfaces(tmp_path):
@@ -243,7 +304,7 @@ def test_dependency_aware_plan_defers_support_surfaces(tmp_path):
     assert by_header["__internal/support.h"].reason == "deferred_upstream_support_only"
     assert by_header["detail/__config"].action == "would_skip"
     assert by_header["detail/__config"].reason == (
-        "covered_by_bootstrap_manual:libascendcxx/include/ascend/std/__config"
+        "covered_by_bootstrap_manual:asc-stl/include/asc/std/__config"
     )
     assert by_header["__fixture/a.h"].action == "would_rewrite"
     assert model.calls == []
