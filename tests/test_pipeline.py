@@ -44,8 +44,8 @@ def test_pipeline_passes_on_first_commit(tmp_path):
     assert result.commit_passed is True
     assert result.pushed is True
     assert result.rounds_used == 0
-    # 目标 guard 应已应用 __cccl -> __accl 段替换
-    assert result.expected_header_guard == "LIBASCENDCXX_INCLUDE_ASCEND_STD___ACCL_OS_H_"
+    # 目标 guard 应已应用 __cccl -> __asc 段替换
+    assert result.expected_header_guard == "ASC_STL_INCLUDE_ASC_STD___ASC_OS_H_"
     assert (cfg.output_dir / "rewritten_target.h").exists()
     assert (cfg.output_dir / "git_push.log").exists()
 

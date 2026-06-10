@@ -72,9 +72,9 @@ def _mini_project(tmp_path) -> tuple[Config, Path, AgentToolbox]:
     for n in ("max.cccl.h", "max.accl.h", "os.cccl.h", "os.accl.h"):
         (ex / n).write_text(f"// {n}\n", encoding="utf-8")
     accl = proj / "accl"
-    inc = accl / "libascendcxx" / "include" / "ascend" / "std"
+    inc = accl / "asc-stl" / "include" / "asc" / "std"
     inc.mkdir(parents=True)
-    (inc / "__config").write_text("#define _ASCEND_AICORE_FN inline\n", encoding="utf-8")
+    (inc / "__config").write_text("#define _ASC_AICORE_FN inline\n", encoding="utf-8")
     cfg = Config.load(
         None,
         project_root=proj,
@@ -84,7 +84,7 @@ def _mini_project(tmp_path) -> tuple[Config, Path, AgentToolbox]:
             "repo_verify": {"conda_sh": ""},
         },
     )
-    toolbox = AgentToolbox(accl, proj / "outputs", host_include_dirs=[accl / "libascendcxx" / "include"])
+    toolbox = AgentToolbox(accl, proj / "outputs", host_include_dirs=[accl / "asc-stl" / "include"])
     return cfg, accl, toolbox
 
 
@@ -100,7 +100,7 @@ def test_initial_rewrite_invokes_tools(tmp_path):
     model = MockModelClient(
         responses=[initial],
         tool_script=[{"name": "read_repo_file",
-                      "arguments": {"relpath": "libascendcxx/include/ascend/std/__config"}}],
+                      "arguments": {"relpath": "asc-stl/include/asc/std/__config"}}],
     )
     pipeline = Pipeline(cfg, model, verifier=None, verbose=False, toolbox=toolbox)
     res = pipeline.convert_only(inp, write_to_repo=False)
@@ -136,10 +136,10 @@ def test_initial_rewrite_without_toolbox_is_single_shot(tmp_path):
 def test_test_migration_invokes_tools(tmp_path):
     cfg = _cfg(tmp_path)
     accl = tmp_path / "accl"
-    inc = accl / "libascendcxx" / "include" / "ascend" / "std"
+    inc = accl / "asc-stl" / "include" / "asc" / "std"
     inc.mkdir(parents=True)
-    (inc / "__config").write_text("#define _ASCEND_AICORE_FN inline\n", encoding="utf-8")
-    toolbox = AgentToolbox(accl, tmp_path / "outputs", host_include_dirs=[accl / "libascendcxx" / "include"])
+    (inc / "__config").write_text("#define _ASC_AICORE_FN inline\n", encoding="utf-8")
+    toolbox = AgentToolbox(accl, tmp_path / "outputs", host_include_dirs=[accl / "asc-stl" / "include"])
 
     payload = {
         "host_test_code": "static int g_failures=0;\nint main(){return g_failures==0?0:1;}",
@@ -149,12 +149,12 @@ def test_test_migration_invokes_tools(tmp_path):
     }
     model = MockModelClient(
         responses=[json.dumps(payload)],
-        tool_script=[{"name": "grep_repo", "arguments": {"pattern": "_ASCEND_AICORE_FN"}}],
+        tool_script=[{"name": "grep_repo", "arguments": {"pattern": "_ASC_AICORE_FN"}}],
     )
     arts = migrate_operator_tests(
         cfg, model,
-        algo_name="max", include_path="ascend/std/__algorithm/max.h",
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        algo_name="max", include_path="asc/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         cccl_header_text="// c", accl_header_text="// a", cccl_test_text="// t",
         verbose=False, toolbox=toolbox,
     )
@@ -178,7 +178,7 @@ def test_attempt_history_enters_fix_request(tmp_path):
     )
     run_test_artifact_fix(
         config=cfg, model_client=model,
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="G", header_text="// h", host_test_text="// host",
         kernel_spec=None, test_feedback_text="host_result: FAILED", round_index=1,
         attempt_history="- 第1轮：根因=operator；改动=[header]；结果=仍失败",

@@ -97,9 +97,9 @@ def _seed_cccl(tmp_path):
 
 def _seed_target(tmp_path):
     target = tmp_path / "accl"
-    include_root = target / "libascendcxx" / "include" / "ascend" / "std"
-    host_root = target / "libascendcxx" / "test" / "libascendcxx" / "ascend" / "host"
-    kernel_root = target / "libascendcxx" / "test" / "libascendcxx" / "ascend" / "kernel"
+    include_root = target / "asc-stl" / "include" / "asc" / "std"
+    host_root = target / "asc-stl" / "test" / "asc-stl" / "asc" / "host"
+    kernel_root = target / "asc-stl" / "test" / "asc-stl" / "asc" / "kernel"
 
     (include_root / "__algorithm").mkdir(parents=True)
     (include_root / "__utility").mkdir(parents=True)
@@ -131,7 +131,7 @@ def _seed_ledger(tmp_path):
                 "",
                 "| Public header | Status | Exposed validated components | Notes |",
                 "| --- | --- | --- | --- |",
-                "| `ascend/std/algorithm` | host_passed | `max` | checked |",
+                "| `asc/std/algorithm` | host_passed | `max` | checked |",
             ]
         )
         + "\n",
@@ -147,7 +147,7 @@ def test_parse_migration_ledger_statuses(tmp_path):
     assert entries["__algorithm/max.h"] == "kernel_passed"
     assert entries["__algorithm/needs_pair.h"] == "generated"
     assert entries["__algorithm/min.h"] == "host_passed"
-    assert entries["libascendcxx/include/ascend/std/algorithm"] == "host_passed"
+    assert entries["asc-stl/include/asc/std/algorithm"] == "host_passed"
 
 
 def test_build_migration_status_report_from_fixture(tmp_path):
@@ -180,7 +180,7 @@ def test_build_migration_status_report_from_fixture(tmp_path):
     assert needs_pair.missing_dependencies == ["__utility/pair.h"]
     by_missing = {(entry.header, entry.dependency): entry for entry in report.missing_dependencies}
     assert by_missing[("__algorithm/needs_pair.h", "__utility/pair.h")].dependency_target_relpath == (
-        "libascendcxx/include/ascend/std/__utility/pair.h"
+        "asc-stl/include/asc/std/__utility/pair.h"
     )
     assert by_missing[("__algorithm/needs_pair.h", "__utility/pair.h")].classification == (
         "true_dependency_gap"
@@ -214,11 +214,11 @@ def test_build_migration_status_report_from_fixture(tmp_path):
         for entry in report.target_only_headers
     ] == [
         (
-            "libascendcxx/include/ascend/std/__algorithm/swap.h",
+            "asc-stl/include/asc/std/__algorithm/swap.h",
             "target_only_compatibility_wrapper",
         ),
-        ("libascendcxx/include/ascend/std/__algorithm/synthetic.h", "target_only"),
-        ("libascendcxx/include/ascend/std/__config", "bootstrap_manual"),
+        ("asc-stl/include/asc/std/__algorithm/synthetic.h", "target_only"),
+        ("asc-stl/include/asc/std/__config", "bootstrap_manual"),
     ]
 
     candidates = report.batch_candidates

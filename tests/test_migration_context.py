@@ -62,14 +62,14 @@ def _seed_cccl(tmp_path):
 
 def _seed_target(tmp_path):
     target = tmp_path / "accl"
-    include_root = target / "libascendcxx" / "include" / "ascend" / "std" / "__algorithm"
+    include_root = target / "asc-stl" / "include" / "asc" / "std" / "__algorithm"
     include_root.mkdir(parents=True)
     (include_root / "all_of.h").write_text("// generated all_of\n", encoding="utf-8")
     (include_root / "max.h").write_text("// validated max\n", encoding="utf-8")
     (include_root / "min.h").write_text("// generated min\n", encoding="utf-8")
-    (target / "libascendcxx" / "include" / "ascend" / "std" / "__utility").mkdir(parents=True)
+    (target / "asc-stl" / "include" / "asc" / "std" / "__utility").mkdir(parents=True)
     (
-        target / "libascendcxx" / "include" / "ascend" / "std" / "__utility" / "move.h"
+        target / "asc-stl" / "include" / "asc" / "std" / "__utility" / "move.h"
     ).write_text("// move\n", encoding="utf-8")
     return target
 
@@ -166,14 +166,14 @@ def test_build_migration_context_pack_from_fixture(tmp_path):
 
     assert pack["existing_accl_counterpart"]["exists"] is True
     assert pack["existing_accl_counterpart"]["target_relpath"] == (
-        "libascendcxx/include/ascend/std/__algorithm/all_of.h"
+        "asc-stl/include/asc/std/__algorithm/all_of.h"
     )
     assert [
         sibling["target_relpath"]
         for sibling in pack["nearby_accl_sibling_headers"]
     ] == [
-        "libascendcxx/include/ascend/std/__algorithm/max.h",
-        "libascendcxx/include/ascend/std/__algorithm/min.h",
+        "asc-stl/include/asc/std/__algorithm/max.h",
+        "asc-stl/include/asc/std/__algorithm/min.h",
     ]
 
     assert [test["relative_path"] for test in pack["mapped_upstream_tests"]] == [

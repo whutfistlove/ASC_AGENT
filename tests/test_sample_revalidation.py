@@ -81,15 +81,15 @@ def _seed_cccl(tmp_path):
 def test_sample_revalidation_maps_public_include_tests_to_private_headers(tmp_path):
     cccl = _seed_cccl(tmp_path)
     target_repo = tmp_path / "accl"
-    target_header = target_repo / "libascendcxx" / "include" / "ascend" / "std" / "__algorithm" / "min.h"
+    target_header = target_repo / "asc-stl" / "include" / "asc" / "std" / "__algorithm" / "min.h"
     target_header.parent.mkdir(parents=True)
     target_header.write_text("// accl min\n", encoding="utf-8")
     host_test = (
         target_repo
-        / "libascendcxx"
+        / "asc-stl"
         / "test"
-        / "libascendcxx"
-        / "ascend"
+        / "asc-stl"
+        / "asc"
         / "host"
         / "min_tests.cpp"
     )
@@ -100,19 +100,19 @@ def test_sample_revalidation_maps_public_include_tests_to_private_headers(tmp_pa
         SampleTarget(
             name="min",
             upstream_header="__algorithm/min.h",
-            target_header="libascendcxx/include/ascend/std/__algorithm/min.h",
+            target_header="asc-stl/include/asc/std/__algorithm/min.h",
             test_directory="algorithms/alg.sorting/alg.min.max",
         ),
         SampleTarget(
             name="swap",
             upstream_header="__utility/swap.h",
-            target_header="libascendcxx/include/ascend/std/__utility/swap.h",
+            target_header="asc-stl/include/asc/std/__utility/swap.h",
             test_directory="utilities/utility/utility.swap",
         ),
         SampleTarget(
             name="clamp",
             upstream_header="__algorithm/clamp.h",
-            target_header="libascendcxx/include/ascend/std/__algorithm/clamp.h",
+            target_header="asc-stl/include/asc/std/__algorithm/clamp.h",
             test_directory="algorithms/alg.sorting/alg.clamp",
         ),
     )
@@ -151,7 +151,7 @@ def test_write_sample_revalidation_report_is_deterministic_json(tmp_path):
         SampleTarget(
             name="minmax",
             upstream_header="__algorithm/minmax.h",
-            target_header="libascendcxx/include/ascend/std/__algorithm/minmax.h",
+            target_header="asc-stl/include/asc/std/__algorithm/minmax.h",
             test_directory="algorithms/alg.sorting/alg.min.max",
         ),
     )

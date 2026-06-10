@@ -55,11 +55,11 @@ def test_dry_run_command_construction(tmp_path):
         },
     )
     v = RepoVerifier(cfg, dry_run=True, verbose=False)
-    v.git_add_and_commit("add os.h", "libascendcxx/include/ascend/std/__accl/os.h")
+    v.git_add_and_commit("add os.h", "asc-stl/include/asc/std/__asc/os.h")
     v.run_clang_format(Path("/repo/x.h"))
     joined = "\n".join(v.commands)
     # shlex.quote 只在必要时加引号；纯安全字符路径保持原样
-    assert "git add -- libascendcxx/include/ascend/std/__accl/os.h" in joined
+    assert "git add -- asc-stl/include/asc/std/__asc/os.h" in joined
     assert "git commit -s -m 'add os.h'" in joined
     assert "clang-format-14 -i /repo/x.h" in joined
 

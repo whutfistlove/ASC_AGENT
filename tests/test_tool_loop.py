@@ -26,10 +26,10 @@ def _cfg(tmp_path) -> Config:
 
 def _toolbox(tmp_path) -> AgentToolbox:
     repo = tmp_path / "accl"
-    inc = repo / "libascendcxx" / "include" / "ascend" / "std"
+    inc = repo / "asc-stl" / "include" / "asc" / "std"
     inc.mkdir(parents=True)
-    (inc / "__config").write_text("#define _ASCEND_AICORE_FN inline\n", encoding="utf-8")
-    return AgentToolbox(repo, tmp_path / "outputs", host_include_dirs=[repo / "libascendcxx" / "include"])
+    (inc / "__config").write_text("#define _ASC_AICORE_FN inline\n", encoding="utf-8")
+    return AgentToolbox(repo, tmp_path / "outputs", host_include_dirs=[repo / "asc-stl" / "include"])
 
 
 def test_fix_invokes_tools_before_answering(tmp_path):
@@ -45,13 +45,13 @@ def test_fix_invokes_tools_before_answering(tmp_path):
     client = MockModelClient(
         responses=[final],
         tool_script=[{"name": "read_repo_file",
-                      "arguments": {"relpath": "libascendcxx/include/ascend/std/__config"}}],
+                      "arguments": {"relpath": "asc-stl/include/asc/std/__config"}}],
     )
 
     out = run_test_artifact_fix(
         config=cfg,
         model_client=client,
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="GUARD_H_",
         header_text="// header",
         host_test_text="// host",
@@ -77,7 +77,7 @@ def test_fix_without_toolbox_is_single_shot(tmp_path):
     client = MockModelClient(responses=[final])
     out = run_test_artifact_fix(
         config=cfg, model_client=client,
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="GUARD_H_", header_text="// h", host_test_text="// host",
         kernel_spec=None, test_feedback_text="kernel_result: FAILED", round_index=1,
         verbose=False, toolbox=None,
@@ -101,7 +101,7 @@ def test_tool_calls_are_persisted_for_audit(tmp_path):
     )
     run_test_artifact_fix(
         config=cfg, model_client=client,
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="G", header_text="// h", host_test_text="// host",
         kernel_spec=None, test_feedback_text="host_result: FAILED", round_index=1,
         verbose=False, toolbox=toolbox,
@@ -127,7 +127,7 @@ def test_fix_with_tools_tolerates_conversational_preamble(tmp_path):
     )
     out = run_test_artifact_fix(
         config=cfg, model_client=client,
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="G", header_text="// h", host_test_text="// host",
         kernel_spec=None, test_feedback_text="host_result: FAILED", round_index=1,
         verbose=False, toolbox=toolbox,
@@ -143,7 +143,7 @@ def test_fix_without_tools_keeps_strict_json(tmp_path):
     with pytest.raises(ValueError):
         run_test_artifact_fix(
             config=cfg, model_client=client,
-            target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+            target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
             expected_header_guard="G", header_text="// h", host_test_text="// host",
             kernel_spec=None, test_feedback_text="FAILED", round_index=1,
             verbose=False, toolbox=None,

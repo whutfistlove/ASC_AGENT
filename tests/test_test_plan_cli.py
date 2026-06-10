@@ -116,7 +116,7 @@ def test_test_migrate_requires_explicit_mode(capsys):
 def test_test_migrate_mock_writes_artifact_report(tmp_path, monkeypatch, capsys):
     project = _seed_project(tmp_path)
     cccl = _seed_cccl(tmp_path)
-    target = project / "repos/accl/libascendcxx/include/ascend/std/__algorithm/max.h"
+    target = project / "repos/accl/asc-stl/include/asc/std/__algorithm/max.h"
     target.parent.mkdir(parents=True)
     target.write_text("// accl max\n", encoding="utf-8")
     monkeypatch.setattr(cli, "PROJECT_ROOT", project)

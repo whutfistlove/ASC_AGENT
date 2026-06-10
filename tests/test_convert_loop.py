@@ -13,7 +13,7 @@ from core.config import Config
 from core.model_client import MockModelClient
 from core.pipeline import RunResult
 
-TARGET_REL = "libascendcxx/include/ascend/std/__algorithm/min.h"
+TARGET_REL = "asc-stl/include/asc/std/__algorithm/min.h"
 
 
 def _make_config(tmp_path) -> Config:
@@ -72,7 +72,7 @@ def _seed_real_layout_cccl_for_max(tmp_path) -> Path:
 
 def _result() -> RunResult:
     return RunResult(input_path="x.h", target_relpath=TARGET_REL,
-                     expected_header_guard="LIBASCENDCXX_INCLUDE_ASCEND_STD___ALGORITHM_MIN_H_")
+                     expected_header_guard="ASC_STL_INCLUDE_ASC_STD___ALGORITHM_MIN_H_")
 
 
 def test_run_operator_tests_preserves_test_migration_plan(tmp_path):
@@ -80,7 +80,7 @@ def test_run_operator_tests_preserves_test_migration_plan(tmp_path):
     _seed_target(cfg)
     artifacts = {
         "host_test_code": (
-            '#include "ascend/std/__algorithm/min.h"\n'
+            '#include "asc/std/__algorithm/min.h"\n'
             "int main(){ return 0; }\n"
         ),
         "kernel_spec": {
@@ -110,21 +110,21 @@ def test_maybe_migrate_tests_uses_real_index_with_mock_model(tmp_path):
     cfg = _make_config(tmp_path)
     cccl = _seed_real_layout_cccl_for_max(tmp_path)
     input_path = cccl / "libcudacxx" / "include" / "cuda" / "std" / "__algorithm" / "max.h"
-    target_rel = "libascendcxx/include/ascend/std/__algorithm/max.h"
+    target_rel = "asc-stl/include/asc/std/__algorithm/max.h"
     target = Path(cfg.target_repo) / target_rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("// accl max header\n", encoding="utf-8")
     payload = {
         "host_test_code": (
-            '#include "ascend/std/__algorithm/max.h"\n'
+            '#include "asc/std/__algorithm/max.h"\n'
             "static int g_failures = 0;\n"
-            "int main(){ int got = ascend::std::max(1, 2); int expected = 2; "
+            "int main(){ int got = asc::std::max(1, 2); int expected = 2; "
             "if (got != expected) ++g_failures; return g_failures == 0 ? 0 : 1; }"
         ),
         "kernel_spec": {
             "dtype": "int32_t",
             "input_init": "h_x[i]=1; h_y[i]=2;",
-            "element_op_code": "z_val = ascend::std::max(x_val, y_val);",
+            "element_op_code": "z_val = asc::std::max(x_val, y_val);",
             "golden_code": "expected = (x_ref < y_ref) ? y_ref : x_ref;",
         },
         "notes": "mock test migration",

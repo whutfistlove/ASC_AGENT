@@ -20,7 +20,7 @@ def _cfg(tmp_path) -> Config:
 
 def test_build_fix_request_without_test_feedback():
     text = build_fix_request(
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="G_",
         baseline_text="baseline",
         commit_log_text="commit log",
@@ -31,7 +31,7 @@ def test_build_fix_request_without_test_feedback():
 
 def test_build_fix_request_with_test_feedback():
     text = build_fix_request(
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         expected_header_guard="G_",
         baseline_text="baseline",
         commit_log_text="commit log",
@@ -60,7 +60,7 @@ def test_test_artifact_fix_ignores_json_null_host_test_code(tmp_path):
     out = run_test_artifact_fix(
         cfg,
         model,
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/minmax.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/minmax.h",
         expected_header_guard="G_",
         header_text="// broken\n",
         host_test_text="// previous host\n",
@@ -85,7 +85,7 @@ def test_test_artifact_fix_rejects_non_json_extra_text(tmp_path):
         run_test_artifact_fix(
             cfg,
             model,
-            target_relpath="libascendcxx/include/ascend/std/__algorithm/minmax.h",
+            target_relpath="asc-stl/include/asc/std/__algorithm/minmax.h",
             expected_header_guard="G_",
             header_text="// broken\n",
             host_test_text="// previous host\n",
@@ -104,7 +104,7 @@ def test_test_artifact_fix_rejects_host_test_that_always_returns_zero(tmp_path):
                 {
                     "root_cause": "host_test",
                     "host_test_code": (
-                        '#include "ascend/std/__algorithm/minmax.h"\n'
+                        '#include "asc/std/__algorithm/minmax.h"\n'
                         "int main(){ bool pass = false; return 0; }\n"
                     ),
                     "notes": "bad test",
@@ -117,7 +117,7 @@ def test_test_artifact_fix_rejects_host_test_that_always_returns_zero(tmp_path):
         run_test_artifact_fix(
             cfg,
             model,
-            target_relpath="libascendcxx/include/ascend/std/__algorithm/minmax.h",
+            target_relpath="asc-stl/include/asc/std/__algorithm/minmax.h",
             expected_header_guard="G_",
             header_text="// header\n",
             host_test_text="// previous host\n",

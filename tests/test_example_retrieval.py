@@ -47,7 +47,7 @@ def test_select_header_exact_name_ranks_first(tmp_path):
     d = _seed_headers(tmp_path)
     cfg = _Cfg({"e1": {"cccl": str(d / "max.cccl.h"), "accl": str(d / "max.accl.h")}}, {})
     out = select_header_examples(
-        cfg, target_relpath="libascendcxx/include/ascend/std/__numeric/gcd.h",
+        cfg, target_relpath="asc-stl/include/asc/std/__numeric/gcd.h",
         source_text="whatever", k=2,
     )
     # 迁 gcd 时，gcd 示例必须排第一（同名命中）。
@@ -59,7 +59,7 @@ def test_select_header_by_token_overlap_when_no_name_match(tmp_path):
     cfg = _Cfg({"e1": {"cccl": str(d / "max.cccl.h"), "accl": str(d / "max.accl.h")}}, {})
     # 算子名 zzz 不命中任何示例；靠源文本 token 重叠：内容贴近 swap。
     out = select_header_examples(
-        cfg, target_relpath="libascendcxx/include/ascend/std/__x/zzz.h",
+        cfg, target_relpath="asc-stl/include/asc/std/__x/zzz.h",
         source_text="in place swap two references void", k=1,
     )
     assert Path(out[0][0]).name == "swap.cccl.h"

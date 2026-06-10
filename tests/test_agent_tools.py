@@ -10,9 +10,9 @@ from core.agent_tools import AgentToolbox, parse_tool_arguments
 @pytest.fixture
 def toolbox(tmp_path):
     repo = tmp_path / "accl"
-    inc = repo / "libascendcxx" / "include" / "ascend" / "std"
+    inc = repo / "asc-stl" / "include" / "asc" / "std"
     inc.mkdir(parents=True)
-    (inc / "__config").write_text("#define _ASCEND_AICORE_FN inline\n", encoding="utf-8")
+    (inc / "__config").write_text("#define _ASC_AICORE_FN inline\n", encoding="utf-8")
     (inc / "max.h").write_text("// max header\nint sentinel_symbol = 1;\n", encoding="utf-8")
     out = tmp_path / "outputs"
     out.mkdir()
@@ -20,16 +20,16 @@ def toolbox(tmp_path):
         "line ok\n" * 50 + "kernel.cpp:5:3: error: no matching function for call to 'foo'\nmore\n",
         encoding="utf-8",
     )
-    return AgentToolbox(repo, out, host_include_dirs=[repo / "libascendcxx" / "include"])
+    return AgentToolbox(repo, out, host_include_dirs=[repo / "asc-stl" / "include"])
 
 
 def test_read_repo_file_ok(toolbox):
-    out = toolbox.read_repo_file("libascendcxx/include/ascend/std/__config")
-    assert "_ASCEND_AICORE_FN" in out
+    out = toolbox.read_repo_file("asc-stl/include/asc/std/__config")
+    assert "_ASC_AICORE_FN" in out
 
 
 def test_read_repo_file_missing(toolbox):
-    assert "不存在" in toolbox.read_repo_file("libascendcxx/include/ascend/std/nope.h")
+    assert "不存在" in toolbox.read_repo_file("asc-stl/include/asc/std/nope.h")
 
 
 def test_read_repo_file_sandbox_escape(toolbox):

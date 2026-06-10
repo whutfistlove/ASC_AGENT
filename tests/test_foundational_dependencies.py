@@ -8,7 +8,7 @@ import pytest
 
 ACCL_INCLUDE = (
     Path(__file__).resolve().parents[1]
-    / "repos/accl/libascendcxx/include"
+    / "repos/accl/asc-stl/include"
 )
 
 
@@ -22,27 +22,27 @@ def test_accl_foundational_dependencies_compile_and_run(tmp_path: Path) -> None:
     source.write_text(
         textwrap.dedent(
             """
-            #include "ascend/std/__type_traits/integral_constant.h"
-            #include "ascend/std/__type_traits/remove_reference.h"
-            #include "ascend/std/__type_traits/is_reference.h"
-            #include "ascend/std/__type_traits/is_same.h"
-            #include "ascend/std/__type_traits/conditional.h"
-            #include "ascend/std/__utility/move.h"
-            #include "ascend/std/__utility/forward.h"
-            #include "ascend/std/__utility/pair.h"
-            #include "ascend/std/__functional/identity.h"
-            #include "ascend/std/__functional/operations.h"
-            #include "ascend/std/__algorithm/comp.h"
-            #include "ascend/std/__algorithm/minmax.h"
+            #include "asc/std/__type_traits/integral_constant.h"
+            #include "asc/std/__type_traits/remove_reference.h"
+            #include "asc/std/__type_traits/is_reference.h"
+            #include "asc/std/__type_traits/is_same.h"
+            #include "asc/std/__type_traits/conditional.h"
+            #include "asc/std/__utility/move.h"
+            #include "asc/std/__utility/forward.h"
+            #include "asc/std/__utility/pair.h"
+            #include "asc/std/__functional/identity.h"
+            #include "asc/std/__functional/operations.h"
+            #include "asc/std/__algorithm/comp.h"
+            #include "asc/std/__algorithm/minmax.h"
 
-            static_assert(ascend::std::true_type::value, "true_type");
-            static_assert(!ascend::std::false_type::value, "false_type");
-            static_assert(ascend::std::is_same_v<ascend::std::remove_reference_t<int&>, int>, "remove_reference");
-            static_assert(ascend::std::is_lvalue_reference_v<int&>, "lvalue reference");
-            static_assert(ascend::std::is_rvalue_reference_v<int&&>, "rvalue reference");
-            static_assert(ascend::std::is_same_v<ascend::std::conditional_t<true, int, long>, int>, "conditional true");
-            static_assert(ascend::std::is_same_v<ascend::std::conditional_t<false, int, long>, long>, "conditional false");
-            static_assert(ascend::std::__is_identity_v<ascend::std::identity>, "identity marker");
+            static_assert(asc::std::true_type::value, "true_type");
+            static_assert(!asc::std::false_type::value, "false_type");
+            static_assert(asc::std::is_same_v<asc::std::remove_reference_t<int&>, int>, "remove_reference");
+            static_assert(asc::std::is_lvalue_reference_v<int&>, "lvalue reference");
+            static_assert(asc::std::is_rvalue_reference_v<int&&>, "rvalue reference");
+            static_assert(asc::std::is_same_v<asc::std::conditional_t<true, int, long>, int>, "conditional true");
+            static_assert(asc::std::is_same_v<asc::std::conditional_t<false, int, long>, long>, "conditional false");
+            static_assert(asc::std::__is_identity_v<asc::std::identity>, "identity marker");
 
             struct MoveOnly {
               int value;
@@ -67,7 +67,7 @@ def test_accl_foundational_dependencies_compile_and_run(tmp_path: Path) -> None:
 
             template <class T>
             constexpr int forward_category(T&& value) {
-              return category(ascend::std::forward<T>(value));
+              return category(asc::std::forward<T>(value));
             }
 
             int main() {
@@ -82,62 +82,62 @@ def test_accl_foundational_dependencies_compile_and_run(tmp_path: Path) -> None:
               }
 
               MoveOnly moved_from(7);
-              MoveOnly moved_to(ascend::std::move(moved_from));
+              MoveOnly moved_to(asc::std::move(moved_from));
               if (moved_to.value != 7 || moved_from.value != -1) {
                 ++failures;
               }
 
-              ascend::std::pair<int, int> values(4, 9);
+              asc::std::pair<int, int> values(4, 9);
               if (values.first != 4 || values.second != 9) {
                 ++failures;
               }
 
-              ascend::std::pair<MoveOnly, int> move_pair(MoveOnly(11), 5);
+              asc::std::pair<MoveOnly, int> move_pair(MoveOnly(11), 5);
               if (move_pair.first.value != 11 || move_pair.second != 5) {
                 ++failures;
               }
 
               int a = 8;
               int b = 2;
-              ascend::std::pair<int&, int&> refs(a, b);
+              asc::std::pair<int&, int&> refs(a, b);
               refs.first = 10;
               refs.second = 20;
               if (a != 10 || b != 20) {
                 ++failures;
               }
 
-              auto ordered = ascend::std::minmax(a, b);
+              auto ordered = asc::std::minmax(a, b);
               if (&ordered.first != &a || &ordered.second != &b) {
                 ++failures;
               }
 
-              auto tied = ascend::std::minmax(a, a);
+              auto tied = asc::std::minmax(a, a);
               if (&tied.first != &a || &tied.second != &a) {
                 ++failures;
               }
 
-              auto descending = ascend::std::minmax(a, b, ascend::std::greater<int>());
+              auto descending = asc::std::minmax(a, b, asc::std::greater<int>());
               if (&descending.first != &b || &descending.second != &a) {
                 ++failures;
               }
 
               int id_value = 13;
-              auto&& id_ref = ascend::std::identity()(id_value);
+              auto&& id_ref = asc::std::identity()(id_value);
               id_ref = 21;
               if (id_value != 21) {
                 ++failures;
               }
 
-              if (ascend::std::plus<int>()(2, 5) != 7) {
+              if (asc::std::plus<int>()(2, 5) != 7) {
                 ++failures;
               }
-              if (!ascend::std::less<void>()(2, 5)) {
+              if (!asc::std::less<void>()(2, 5)) {
                 ++failures;
               }
-              if (!ascend::std::__less()(2, 5)) {
+              if (!asc::std::__less()(2, 5)) {
                 ++failures;
               }
-              if (!ascend::std::__equal_to()(5, 5)) {
+              if (!asc::std::__equal_to()(5, 5)) {
                 ++failures;
               }
 

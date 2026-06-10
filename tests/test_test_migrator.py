@@ -47,7 +47,7 @@ def test_validate_kernel_spec_requires_slots():
 
 def test_validate_host_test_code_requires_nonzero_failure_exit():
     bad = (
-        '#include "ascend/std/__algorithm/minmax.h"\n'
+        '#include "asc/std/__algorithm/minmax.h"\n'
         "int main(){ bool pass = false; return 0; }\n"
     )
     with pytest.raises(ValueError, match="返回非零"):
@@ -66,9 +66,9 @@ def test_validate_host_test_code_requires_nonzero_failure_exit():
 
 def test_validators_reject_tested_api_as_expected_or_golden():
     host = (
-        '#include "ascend/std/__algorithm/max.h"\n'
+        '#include "asc/std/__algorithm/max.h"\n'
         "static int g_failures = 0;\n"
-        "int main(){ auto expected = ascend::std::max(1, 2); return g_failures ? 1 : 0; }\n"
+        "int main(){ auto expected = asc::std::max(1, 2); return g_failures ? 1 : 0; }\n"
     )
     with pytest.raises(ValueError, match="独立逻辑"):
         validate_host_test_code(host, algo_name="max")
@@ -77,8 +77,8 @@ def test_validators_reject_tested_api_as_expected_or_golden():
         validate_kernel_spec(
             {
                 "input_init": "h_x[i]=1; h_y[i]=2;",
-                "element_op_code": "z_val = ascend::std::max(x_val, y_val);",
-                "golden_code": "expected = ascend::std::max(x_ref, y_ref);",
+                "element_op_code": "z_val = asc::std::max(x_val, y_val);",
+                "golden_code": "expected = asc::std::max(x_ref, y_ref);",
             }
         )
 
@@ -191,14 +191,14 @@ def test_migrate_operator_tests_parses_contract(tmp_path):
     cfg = _cfg(tmp_path)
     payload = {
         "host_test_code": (
-            '#include "ascend/std/__algorithm/swap.h"\n'
+            '#include "asc/std/__algorithm/swap.h"\n'
             "static int g_failures = 0;\n"
             "int main(){return g_failures == 0 ? 0 : 1;}"
         ),
         "kernel_spec": {
             "gm_inputs": 2,
             "input_init": "h_x[i]=static_cast<float>(i); h_y[i]=static_cast<float>(i)+1.0f;",
-            "element_op_code": "float a=x_val; float b=y_val; ascend::std::swap(a,b); z_val=a;",
+            "element_op_code": "float a=x_val; float b=y_val; asc::std::swap(a,b); z_val=a;",
             "golden_code": "expected = y_ref;",
         },
         "notes": "in-place swap",
@@ -208,8 +208,8 @@ def test_migrate_operator_tests_parses_contract(tmp_path):
     arts = migrate_operator_tests(
         cfg, model,
         algo_name="swap",
-        include_path="ascend/std/__algorithm/swap.h",
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/swap.h",
+        include_path="asc/std/__algorithm/swap.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/swap.h",
         cccl_header_text="// cccl swap header",
         accl_header_text="// accl swap header",
         cccl_test_text="// cccl swap test",
@@ -229,9 +229,9 @@ def test_migrate_operator_tests_uses_real_test_index_plan_in_prompt(tmp_path):
     report = scan_test_index(_seed_indexed_cccl_tests(tmp_path))
     payload = {
         "host_test_code": (
-            '#include "ascend/std/__algorithm/max.h"\n'
+            '#include "asc/std/__algorithm/max.h"\n'
             "static int g_failures = 0;\n"
-            "int main(){ int got = ascend::std::max(1, 2); int expected = 2; "
+            "int main(){ int got = asc::std::max(1, 2); int expected = 2; "
             "if (got != expected) ++g_failures; return g_failures == 0 ? 0 : 1; }"
         ),
         "kernel_spec": {
@@ -239,7 +239,7 @@ def test_migrate_operator_tests_uses_real_test_index_plan_in_prompt(tmp_path):
             "gm_outputs": 1,
             "dtype": "int32_t",
             "input_init": "h_x[i]=1; h_y[i]=2;",
-            "element_op_code": "z_val = ascend::std::max(x_val, y_val);",
+            "element_op_code": "z_val = asc::std::max(x_val, y_val);",
             "golden_code": "expected = (x_ref < y_ref) ? y_ref : x_ref;",
         },
         "notes": "max selected from real index",
@@ -250,8 +250,8 @@ def test_migrate_operator_tests_uses_real_test_index_plan_in_prompt(tmp_path):
         cfg,
         model,
         algo_name="max",
-        include_path="ascend/std/__algorithm/max.h",
-        target_relpath="libascendcxx/include/ascend/std/__algorithm/max.h",
+        include_path="asc/std/__algorithm/max.h",
+        target_relpath="asc-stl/include/asc/std/__algorithm/max.h",
         cccl_header_text="// cccl max header",
         accl_header_text="// accl max header",
         cccl_test_text="// legacy should be replaced",

@@ -77,8 +77,8 @@ def test_mock_scripted_exhausted_raises():
 
 def test_mock_auto_uses_expected_guard():
     client = MockModelClient()
-    req = "【expected_header_guard】\nLIBASCENDCXX_INCLUDE_ASCEND_STD___ACCL_OS_H_\n\n其它"
+    req = "【expected_header_guard】\nASC_STL_INCLUDE_ASC_STD___ASC_OS_H_\n\n其它"
     raw = client.generate(system_prompt="s", user_content=req)
     data = json.loads(raw)
-    assert "LIBASCENDCXX_INCLUDE_ASCEND_STD___ACCL_OS_H_" in data["rewritten_code"]
+    assert "ASC_STL_INCLUDE_ASC_STD___ASC_OS_H_" in data["rewritten_code"]
     assert data["file_type"] == "mock_header"

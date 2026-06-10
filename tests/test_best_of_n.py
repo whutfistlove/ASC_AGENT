@@ -58,7 +58,7 @@ def test_n_one_calls_generate_once():
 # --------------------------------------------------------------------------- #
 def test_score_header_prefers_correct_guard_and_balance():
     guard = "G_H_"
-    good = "#ifndef G_H_\n#define G_H_\nnamespace ascend::std {}\n#endif // G_H_\n"
+    good = "#ifndef G_H_\n#define G_H_\nnamespace asc::std {}\n#endif // G_H_\n"
     bad = "int x;\n"
     assert score_header_code(good, guard) > score_header_code(bad, guard)
     # 指令不配平要被罚分。
@@ -107,7 +107,7 @@ def test_pipeline_best_of_n_selects_better_header(tmp_path):
     weak = json.dumps({"file_type": "os_h", "rewritten_code": "broken no directives\n", "notes": "weak"})
     strong = json.dumps({
         "file_type": "os_h",
-        "rewritten_code": "#ifndef G\n#define G\nnamespace ascend::std {}\n#endif // G\n",
+        "rewritten_code": "#ifndef G\n#define G\nnamespace asc::std {}\n#endif // G\n",
         "notes": "strong",
     })
     model = MockModelClient(responses=[weak, strong])  # 顺序：先弱后强，验证按分择优而非取第一个
