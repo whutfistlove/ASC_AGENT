@@ -1,7 +1,7 @@
 """配置系统（ASC_agent / cccl-to-accl-v3 的核心改进）。
 
 设计目标：彻底消除 v2 里的硬编码（conda 路径、用户目录、工具版本、
-hook 检查文案、__cccl→__accl 这种隐式重命名等）。
+hook 检查文案、__cccl→__asc 这种隐式重命名等）。
 
 加载顺序（后者覆盖前者）：
     1. 内置 DEFAULTS
@@ -47,15 +47,15 @@ DEFAULTS: dict[str, Any] = {
     # 路径与命名映射规则（v2 里这部分是写死/缺失的）
     "mapping": {
         "source_repo_prefix": "libcudacxx/include/cuda/std",
-        "target_repo_prefix": "libascendcxx/include/ascend/std",
+        "target_repo_prefix": "asc-stl/include/asc/std",
         # CCCL 侧测试树（与真实 libcudacxx 一致）。算子头 <op>.h 的测试源约定为
         # <cccl_test_prefix>/<同样的子路径段>/<op>.pass.cpp。用于「同步迁移测试代码」。
-        "cccl_test_prefix": "libcudacxx/test/std",
+        "cccl_test_prefix": "libcudacxx/test/libcudacxx/std",
         "cccl_test_suffix": ".pass.cpp",
-        # 对相对路径里的每一段做替换，例如 __cccl -> __accl
+        # 对相对路径里的每一段做替换，例如 __cccl -> __asc
         # 这正是 v2 缺失、导致 header guard 与示例对不上的地方
         "segment_substitutions": [
-            {"from": "__cccl", "to": "__accl"},
+            {"from": "__cccl", "to": "__asc"},
         ],
         "module_hint_fallback": "generic",
     },
@@ -353,7 +353,7 @@ class Config:
 
     @property
     def cccl_test_prefix(self) -> str:
-        return self.raw["mapping"].get("cccl_test_prefix", "libcudacxx/test/std")
+        return self.raw["mapping"].get("cccl_test_prefix", "libcudacxx/test/libcudacxx/std")
 
     @property
     def cccl_test_suffix(self) -> str:

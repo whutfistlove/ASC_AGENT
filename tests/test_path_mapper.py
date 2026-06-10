@@ -1,4 +1,4 @@
-"""path_mapper 单测：重点验证去硬编码后的行为，以及 __cccl->__accl 段替换。"""
+"""path_mapper 单测：重点验证去硬编码后的行为，以及 __cccl->__asc 段替换。"""
 
 from pathlib import Path
 
@@ -13,9 +13,9 @@ from core.path_mapper import (
 )
 
 SRC = "libcudacxx/include/cuda/std"
-TGT = "libascendcxx/include/ascend/std"
-TEST_PREFIX = "libcudacxx/test/std"
-SUBS = [{"from": "__cccl", "to": "__accl"}]
+TGT = "asc-stl/include/asc/std"
+TEST_PREFIX = "libcudacxx/test/libcudacxx/std"
+SUBS = [{"from": "__cccl", "to": "__asc"}]
 
 
 def test_module_hint_from_subdir():
@@ -40,20 +40,20 @@ def test_module_hint_fallback_when_prefix_missing():
 
 
 def test_segment_substitution():
-    assert apply_segment_substitutions("__cccl/os.h", SUBS) == "__accl/os.h"
+    assert apply_segment_substitutions("__cccl/os.h", SUBS) == "__asc/os.h"
     assert apply_segment_substitutions("__algorithm/max.h", SUBS) == "__algorithm/max.h"
 
 
 def test_map_target_relpath_applies_substitution():
     p = Path("/x/libcudacxx/include/cuda/std/__cccl/os.h")
     rel = map_target_relpath(p, SRC, TGT, SUBS)
-    assert rel == "libascendcxx/include/ascend/std/__accl/os.h"
+    assert rel == "asc-stl/include/asc/std/__asc/os.h"
 
 
 def test_map_target_relpath_no_substitution_needed():
     p = Path("/x/libcudacxx/include/cuda/std/__algorithm/max.h")
     rel = map_target_relpath(p, SRC, TGT, SUBS)
-    assert rel == "libascendcxx/include/ascend/std/__algorithm/max.h"
+    assert rel == "asc-stl/include/asc/std/__algorithm/max.h"
 
 
 def test_map_target_relpath_rejects_bad_prefix():
@@ -66,21 +66,21 @@ def test_guard_matches_example_os_h():
     p = Path("/x/libcudacxx/include/cuda/std/__cccl/os.h")
     rel = map_target_relpath(p, SRC, TGT, SUBS)
     guard = expected_guard_from_relpath(rel)
-    assert guard == "LIBASCENDCXX_INCLUDE_ASCEND_STD___ACCL_OS_H_"
+    assert guard == "ASC_STL_INCLUDE_ASC_STD___ASC_OS_H_"
 
 
 def test_guard_matches_example_algorithm_wrapper():
     p = Path("/x/libcudacxx/include/cuda/std/__cccl/algorithm_wrapper.h")
     rel = map_target_relpath(p, SRC, TGT, SUBS)
     guard = expected_guard_from_relpath(rel)
-    assert guard == "LIBASCENDCXX_INCLUDE_ASCEND_STD___ACCL_ALGORITHM_WRAPPER_H_"
+    assert guard == "ASC_STL_INCLUDE_ASC_STD___ASC_ALGORITHM_WRAPPER_H_"
 
 
 def test_map_cccl_test_path_parallel_tree():
     # 算子头 -> 平行 test 树下的 .pass.cpp，子路径段保持不变。
     p = Path("/x/repos/cccl/libcudacxx/include/cuda/std/__algorithm/swap.h")
     tp = map_cccl_test_path(p, SRC, TEST_PREFIX, ".pass.cpp")
-    assert tp == "/x/repos/cccl/libcudacxx/test/std/__algorithm/swap.pass.cpp"
+    assert tp == "/x/repos/cccl/libcudacxx/test/libcudacxx/std/__algorithm/swap.pass.cpp"
 
 
 def test_map_cccl_test_path_rejects_bad_prefix():
@@ -93,4 +93,4 @@ def test_guard_without_substitution_keeps_cccl():
     p = Path("/x/libcudacxx/include/cuda/std/__cccl/os.h")
     rel = map_target_relpath(p, SRC, TGT, segment_substitutions=None)
     guard = expected_guard_from_relpath(rel)
-    assert guard == "LIBASCENDCXX_INCLUDE_ASCEND_STD___CCCL_OS_H_"
+    assert guard == "ASC_STL_INCLUDE_ASC_STD___CCCL_OS_H_"

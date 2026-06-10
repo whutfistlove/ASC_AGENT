@@ -2,9 +2,9 @@
 
 相对 v2 的改进：
 1. 去掉 `if name == "os.h"` 这类写死的特判，module_hint 完全由路径推导。
-2. 增加 segment_substitutions（如 __cccl -> __accl）。这正是 v2 缺失的一环：
+2. 增加 segment_substitutions（如 __cccl -> __asc）。这正是 v2 缺失的一环：
    v2 只做前缀替换，导致 os.h 的 header guard 算出来是 ..._CCCL_OS_H_，
-   而真实示例对里的正确 guard 是 ..._ACCL_OS_H_，两者对不上。
+   而真实示例对里的正确 guard 是 ..._ASC_OS_H_，两者对不上。
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def map_target_relpath(
 ) -> str:
     """
     libcudacxx/include/cuda/std/<...>
-      -> libascendcxx/include/ascend/std/<... 经过段替换 ...>
+      -> asc-stl/include/asc/std/<... 经过段替换 ...>
     """
     rel = _relative_after_prefix(input_path, source_repo_prefix)
     if rel is None:
@@ -90,7 +90,7 @@ def map_cccl_test_path(
     """从 CCCL 算子头文件路径推导其 CCCL 侧测试源路径（平行 test 树）。
 
         <root>/libcudacxx/include/cuda/std/__algorithm/min.h
-          -> <root>/libcudacxx/test/std/__algorithm/min.pass.cpp
+          -> <root>/libcudacxx/test/libcudacxx/std/__algorithm/min.pass.cpp
 
     保持算子的子路径段不变（如 __algorithm/min），仅把 include 前缀换成 test 前缀、
     把头文件后缀换成测试后缀。返回绝对路径字符串；调用方负责判断是否存在。

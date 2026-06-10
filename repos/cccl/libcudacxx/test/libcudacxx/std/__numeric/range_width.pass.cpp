@@ -13,7 +13,7 @@
 //   range_width(a, b, c) == max(a, b, c) - min(a, b, c), the largest pairwise
 //   absolute difference among the three inputs. Three inputs -> single output,
 //   so a migrated kernel_spec should use gm_inputs=3, gm_outputs=1 with an
-//   independent golden that recomputes max-min without calling ascend::std::*.
+//   independent golden that recomputes max-min without calling asc::std::*.
 
 #include <cuda/std/__numeric/range_width.h>
 #include <cassert>

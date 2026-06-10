@@ -14,15 +14,15 @@ paths:
 
 mapping:
   source_repo_prefix: libcudacxx/include/cuda/std
-  target_repo_prefix: libascendcxx/include/ascend/std
+  target_repo_prefix: asc-stl/include/asc/std
   # CCCL 侧测试树（平行于 include，贴近真实 libcudacxx）。算子头 <op>.h 对应的
   # 测试源约定为 <cccl_test_prefix>/<相同子路径>/<op><cccl_test_suffix>，
   # 用于「同步迁移测试代码」（见 core/test_migrator.py）。
-  cccl_test_prefix: libcudacxx/test/std
+  cccl_test_prefix: libcudacxx/test/libcudacxx/std
   cccl_test_suffix: .pass.cpp
   # 目录段重命名（v2 缺失这一步，导致 os.h 的 header guard 与示例对不上）
   segment_substitutions:
-    - { from: __cccl, to: __accl }
+    - { from: __cccl, to: __asc }
   module_hint_fallback: generic
 
 model:
