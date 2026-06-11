@@ -363,6 +363,79 @@ def _is_env_blocked(test_result: dict) -> bool:
     )
 
 
+DEFAULT_LEDGER_PATH = PROJECT_ROOT / "docs" / "migration_ledger.md"
+
+
+def _state_store_path(config: Config) -> Path:
+    from core.migration_state import DEFAULT_STATE_FILENAME
+
+    return config.output_dir / DEFAULT_STATE_FILENAME
+
+
+def _state_status_map(config: Config, header_root: str) -> dict:
+    """读取自动维护的迁移状态作为「已验证证据」（带源文件新鲜度过滤）。"""
+    from core.migration_state import MigrationStateStore
+
+    return MigrationStateStore.load(_state_store_path(config)).fresh_status_map(header_root)
+
+
+def _build_status_report_with_state(config: Config, inventory, test_index, dep_graph):
+    """统一构建迁移状态报告：手写 ledger + 自动验证状态（state store）双证据。"""
+    return build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=config.target_repo,
+        ledger_path=DEFAULT_LEDGER_PATH,
+        target_repo_prefix=config.target_repo_prefix,
+        segment_substitutions=config.segment_substitutions,
+        state_status_map=_state_status_map(config, inventory.header_root),
+        policy=config.migration_policy,
+    )
+
+
+def _record_migration_state(config: Config, *, input_path, target_relpath, test_result,
+                            run_host: bool, run_kernel: bool, args) -> None:
+    """把一次确定的 host/kernel 测试结论回写进 migration_state（闭合 能测 → 能扩）。
+
+    只在「真实跑了测试且按所测维度全部通过」时记录：dry-run / prepare-only / mock / skipped /
+    runner 出错 一律跳过；某维度因无 cannsim 等被预检跳过不算失败（与 `_tests_all_passed`
+    口径一致）。这样：两侧都过→full_passed；仅 kernel 过→kernel_passed；仅 host 过（kernel 被
+    跳过）→host_passed；host 过但 kernel code-fail→不记录（保持 generated，下次重迁重试 kernel）。
+    """
+    if not test_result:
+        return
+    if getattr(args, "test_dry_run", False) or getattr(args, "prepare_tests_only", False) or getattr(args, "mock", False):
+        return
+    if test_result.get("skipped") or test_result.get("error"):
+        return
+    if not _tests_all_passed(test_result, run_host, run_kernel, test_dry_run=False):
+        return
+    host_passed = bool(test_result.get("host_passed")) if run_host else False
+    kernel_passed = bool(test_result.get("kernel_passed")) if run_kernel else False
+    if not host_passed and not kernel_passed:
+        return
+
+    from core.migration_state import MigrationStateStore
+    from core.path_mapper import source_header_relpath
+
+    src = Path(input_path) if input_path else None
+    source_header = source_header_relpath(src, config.source_repo_prefix) if src else None
+    if not source_header:
+        return
+    source_text = src.read_text(encoding="utf-8", errors="replace") if src and src.is_file() else None
+    store_path = _state_store_path(config)
+    store = MigrationStateStore.load(store_path)
+    store.record(
+        source_header=source_header,
+        target_relpath=target_relpath,
+        source_text=source_text,
+        host_passed=host_passed,
+        kernel_passed=kernel_passed,
+    )
+    store.save(store_path)
+
+
 def _resolve_target_relpath_for_test(args, config: Config) -> str:
     if args.target_relpath:
         return args.target_relpath
@@ -735,6 +808,13 @@ def cmd_convert(args) -> int:
             args.prepare_tests_only = True
         # 测试 → 失败回传模型 → 改正写回 → 重测 的全自动闭环
         result.test_result = _run_convert_test_loop(args, config, model_client, result, write_to_repo)
+        # 把确定的通过结论回写 migration_state（闭合 能测 → 能扩：下次闭包可跳过已验证且未变的头）。
+        _run_host, _run_kernel = _resolve_test_selection(args)
+        _record_migration_state(
+            config, input_path=getattr(args, "input", None),
+            target_relpath=result.target_relpath, test_result=result.test_result,
+            run_host=_run_host, run_kernel=_run_kernel, args=args,
+        )
 
     print("\n=== 转换结果 ===")
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
@@ -970,15 +1050,7 @@ def cmd_test_plan(args) -> int:
     inventory = scan_header_inventory(args.cccl_repo)
     test_index = scan_test_index(args.cccl_repo)
     dep_graph = scan_dependency_graph(args.cccl_repo)
-    status_report = build_migration_status_report(
-        inventory=inventory,
-        test_index=test_index,
-        dep_graph=dep_graph,
-        target_repo=config.target_repo,
-        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
-        target_repo_prefix=config.target_repo_prefix,
-        segment_substitutions=config.segment_substitutions,
-    )
+    status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
     status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
     plan = plan_upstream_tests_for_header(
         test_index,
@@ -1062,15 +1134,7 @@ def cmd_test_migrate(args) -> int:
     inventory = scan_header_inventory(args.cccl_repo)
     test_index = scan_test_index(args.cccl_repo)
     dep_graph = scan_dependency_graph(args.cccl_repo)
-    status_report = build_migration_status_report(
-        inventory=inventory,
-        test_index=test_index,
-        dep_graph=dep_graph,
-        target_repo=config.target_repo,
-        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
-        target_repo_prefix=config.target_repo_prefix,
-        segment_substitutions=config.segment_substitutions,
-    )
+    status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
     status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
 
     source_path = Path(inventory.header_root) / args.entry_header
@@ -1208,14 +1272,16 @@ def cmd_migration_context(args) -> int:
     settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
     config = Config.load(settings_path, PROJECT_ROOT)
     output = args.output or default_context_pack_filename(args.entry_header)
+    _inventory = scan_header_inventory(args.cccl_repo)
     pack = build_migration_context_pack_from_scans(
         entry_header=args.entry_header,
         cccl_repo=args.cccl_repo,
         target_repo=config.target_repo,
         examples_root=PROJECT_ROOT / "examples",
-        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
+        ledger_path=DEFAULT_LEDGER_PATH,
         target_repo_prefix=config.target_repo_prefix,
         segment_substitutions=config.segment_substitutions,
+        state_status_map=_state_status_map(config, _inventory.header_root),
     )
     report_path = write_migration_context_pack(pack, config.output_dir, filename=output)
     print("== AI migration context pack ==")
@@ -1246,15 +1312,7 @@ def cmd_dependency_convert(args) -> int:
     inventory = scan_header_inventory(args.cccl_repo)
     test_index = scan_test_index(args.cccl_repo)
     dep_graph = scan_dependency_graph(args.cccl_repo)
-    status_report = build_migration_status_report(
-        inventory=inventory,
-        test_index=test_index,
-        dep_graph=dep_graph,
-        target_repo=config.target_repo,
-        ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
-        target_repo_prefix=config.target_repo_prefix,
-        segment_substitutions=config.segment_substitutions,
-    )
+    status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
 
     model_client = MockModelClient(responses=[]) if args.plan_only else (
         MockModelClient() if args.mock else build_model_client(config)
@@ -1297,6 +1355,12 @@ def cmd_dependency_convert(args) -> int:
             verdict = "FAIL" if is_failure else ("PASS" if passed else "INCONCLUSIVE")
             if not args.quiet:
                 print(f"[test] {run_result.target_relpath}: {verdict}")
+            # 通过则回写 migration_state：本条闭包内此头不会再遇到，价值在「下次重跑闭包时跳过」。
+            _record_migration_state(
+                config, input_path=run_result.input_path,
+                target_relpath=run_result.target_relpath, test_result=test_result,
+                run_host=run_host, run_kernel=run_kernel, args=args,
+            )
             return is_failure, test_result
 
     result = pipeline.convert_dependency_closure(
@@ -1309,6 +1373,9 @@ def cmd_dependency_convert(args) -> int:
         plan_only=args.plan_only,
         on_rewritten=on_rewritten,
         stop_on_test_failure=not getattr(args, "continue_on_test_failure", False),
+        defer_dependents_on_failure=getattr(args, "defer_dependents_on_failure", False),
+        verify_includes=getattr(args, "verify_includes", False),
+        verify_includes_strict=getattr(args, "verify_includes_strict", False),
     )
     report_path = write_dependency_convert_report(config, result, args.output)
 
@@ -1643,6 +1710,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--continue-on-test-failure",
         action="store_true",
         help="某算子 host/kernel 测试失败时仍继续改写/测试后续算子（默认失败即停）",
+    )
+    p_dep_convert.add_argument(
+        "--defer-dependents-on-failure",
+        action="store_true",
+        help="某算子失败时只延期「真正依赖它」的下游，独立分支继续迁移（局部可用、整体延期）",
+    )
+    p_dep_convert.add_argument(
+        "--verify-includes",
+        action="store_true",
+        help="每个算子改写后做一次自包含 include 编译自检（g++ -fsyntax-only），结果写入报告",
+    )
+    p_dep_convert.add_argument(
+        "--verify-includes-strict",
+        action="store_true",
+        help="配合 --verify-includes：include 不自包含（缺依赖）按失败处理，参与 defer/stop 逻辑",
     )
     p_dep_convert.set_defaults(func=cmd_dependency_convert)
 

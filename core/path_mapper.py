@@ -81,6 +81,15 @@ def map_target_relpath(
     return tgt_prefix + rel
 
 
+def source_header_relpath(input_path: Path, source_repo_prefix: str) -> Optional[str]:
+    """从 CCCL 输入路径推导其相对 `source_repo_prefix` 的 header 键（如 `__algorithm/min.h`）。
+
+    与 `inventory.HeaderInventoryEntry.relative_path` / `migration_status` 的 header 键同口径，
+    便于把「测试通过」结论按同一个键回写进 `core.migration_state`。不在源前缀下返回 None。
+    """
+    return _relative_after_prefix(input_path, source_repo_prefix)
+
+
 def map_cccl_test_path(
     input_path: Path,
     source_repo_prefix: str,

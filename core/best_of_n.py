@@ -49,11 +49,13 @@ def best_of_n(
 # --------------------------------------------------------------------------- #
 # 内置打分器（纯函数，便于离线复用与单测）
 # --------------------------------------------------------------------------- #
-def score_header_code(code: str, guard: str) -> float:
-    """头文件候选的结构打分（离线、确定性）：guard 正确 + 预处理指令配平更优。
+def score_header_code(code: str, guard: str, toolbox=None) -> float:
+    """头文件候选打分：有 toolbox 且有 g++ 时以「能否自包含编译」为**主信号**，叠加结构分。
 
-    不做完整编译（孤立头缺宏定义难以可靠编译）；结构信号已能把「丢了 guard / `#endif`
-    不配平 / 空壳」这类明显劣质候选区分开。
+    动机：本项目能廉价验证产物——既然有 g++，就让「真能编过的候选」强烈优先，而不是只看
+    guard/指令配平这些结构信号。把候选头当作一个 TU 编一次（`-fsyntax-only`，自动带 ACCL
+    include 路径），其 `#include "asc/std/..."` 也会就地解析。g++ 缺失时降级为纯结构打分
+    （所有候选趋同→稳定选第一个，不劣化）。
     """
     if not isinstance(code, str) or not code.strip():
         return float("-inf")
@@ -73,6 +75,14 @@ def score_header_code(code: str, guard: str) -> float:
         s -= 1.0  # 预处理指令不配平：几乎必编译失败
     if "asc::std" in code or "_ASC_" in code:
         s += 0.5  # 命中目标命名空间/宏，更像真正迁好的产物
+    if toolbox is not None and hasattr(toolbox, "host_syntax_check"):
+        res = toolbox.host_syntax_check(code)
+        if isinstance(res, str):
+            if res.startswith("OK"):
+                s += 100.0          # 自包含编译通过，强烈优先
+            elif res.startswith("FAILED"):
+                s -= 10.0           # 编译失败，强烈劣后
+            # 「未找到编译器」等中性信息：不加不减
     return s
 
 

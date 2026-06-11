@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.config import MigrationPolicy, default_migration_policy
 from core.dep_graph import HeaderDependencyGraphReport, scan_dependency_graph
 from core.inventory import HeaderInventoryReport, scan_header_inventory
 from core.path_mapper import apply_segment_substitutions, normalize_path_str
@@ -39,28 +40,8 @@ MISSING_DEPENDENCY_CLASSIFICATIONS: tuple[str, ...] = (
     "public_aggregation_narrowed",
     "deferred_upstream_support_only",
 )
-_PUBLIC_AGGREGATION_HEADERS = {
-    "algorithm",
-    "functional",
-    "iterator",
-    "numeric",
-    "type_traits",
-    "utility",
-}
-_BOOTSTRAP_MANUAL_COVERAGE = {
-    "detail/__config": "__config",
-}
-_DEFERRED_UPSTREAM_SUPPORT_PREFIXES = (
-    "__cccl/",
-    "__internal/",
-    "__support/",
-    "detail/",
-)
-_TARGET_ONLY_COMPATIBILITY_WRAPPERS = {
-    "__algorithm/swap.h",
-    "__numeric/gcd.h",
-    "__numeric/lcm.h",
-}
+# 迁移策略已收敛到 core.config.MigrationPolicy（单一事实源）；这里仅保留默认实例的便捷引用。
+# 历史调用方仍可不传 policy，行为与之前完全一致。
 
 
 @dataclass(frozen=True)
@@ -394,8 +375,9 @@ def _manual_coverage_target(
     *,
     target_root: Path,
     target_repo_prefix: str,
+    policy: MigrationPolicy,
 ) -> str | None:
-    covered_by = _BOOTSTRAP_MANUAL_COVERAGE.get(dependency)
+    covered_by = policy.bootstrap_manual_coverage.get(dependency)
     if not covered_by:
         return None
     target_relpath = normalize_path_str(target_repo_prefix).rstrip("/") + "/" + covered_by
@@ -409,8 +391,9 @@ def _target_only_wrapper_covers(
     *,
     target_root: Path,
     target_repo_prefix: str,
+    policy: MigrationPolicy,
 ) -> str | None:
-    if dependency not in _TARGET_ONLY_COMPATIBILITY_WRAPPERS:
+    if dependency not in policy.target_only_compatibility_wrappers:
         return None
     target_relpath = target_relpath_for_header(dependency, target_repo_prefix=target_repo_prefix)
     if (target_root / target_relpath).exists():
@@ -424,8 +407,9 @@ def _classify_missing_dependency(
     dependency: str,
     target_root: Path,
     target_repo_prefix: str,
+    policy: MigrationPolicy,
 ) -> tuple[str, str]:
-    if header in _PUBLIC_AGGREGATION_HEADERS:
+    if header in policy.public_aggregation_headers:
         return (
             "public_aggregation_narrowed",
             "public aggregation header is intentionally limited to validated ACCL components",
@@ -435,6 +419,7 @@ def _classify_missing_dependency(
         dependency,
         target_root=target_root,
         target_repo_prefix=target_repo_prefix,
+        policy=policy,
     )
     if covered_by:
         return ("bootstrap_manual", f"covered by hand-authored ACCL bootstrap header {covered_by}")
@@ -443,6 +428,7 @@ def _classify_missing_dependency(
         dependency,
         target_root=target_root,
         target_repo_prefix=target_repo_prefix,
+        policy=policy,
     )
     if wrapper:
         return (
@@ -450,7 +436,7 @@ def _classify_missing_dependency(
             f"covered by ACCL compatibility wrapper {wrapper}",
         )
 
-    if dependency.startswith(_DEFERRED_UPSTREAM_SUPPORT_PREFIXES):
+    if dependency.startswith(tuple(policy.deferred_upstream_support_prefixes)):
         return (
             "deferred_upstream_support_only",
             "upstream support/config surface is deferred until a direct migration need is selected",
@@ -459,10 +445,10 @@ def _classify_missing_dependency(
     return ("true_dependency_gap", "dependency target is missing and must be migrated or replaced")
 
 
-def _target_only_classification(source_like: str) -> str:
-    if source_like == "__config":
+def _target_only_classification(source_like: str, policy: MigrationPolicy) -> str:
+    if source_like in set(policy.bootstrap_manual_coverage.values()):
         return "bootstrap_manual"
-    if source_like in _TARGET_ONLY_COMPATIBILITY_WRAPPERS:
+    if source_like in policy.target_only_compatibility_wrappers:
         return "target_only_compatibility_wrapper"
     return "target_only"
 
@@ -519,6 +505,7 @@ def _classify_candidate_dependency_counts(
     target_root: Path,
     target_repo_prefix: str,
     segment_substitutions: list[dict] | None,
+    policy: MigrationPolicy,
 ) -> dict[str, int]:
     counts = {name: 0 for name in MISSING_DEPENDENCY_CLASSIFICATIONS}
     for dep in closure:
@@ -534,6 +521,7 @@ def _classify_candidate_dependency_counts(
             dependency=dep,
             target_root=target_root,
             target_repo_prefix=target_repo_prefix,
+            policy=policy,
         )
         counts[classification] += 1
     return counts
@@ -586,14 +574,15 @@ def _build_batch_candidates(
     target_root: Path,
     target_repo_prefix: str,
     segment_substitutions: list[dict] | None,
+    policy: MigrationPolicy,
 ) -> list[BatchCandidateEntry]:
     candidates: list[BatchCandidateEntry] = []
     for header in headers:
         if header.status != "pending" or header.target_exists:
             continue
-        if header.source_header in _PUBLIC_AGGREGATION_HEADERS:
+        if header.source_header in policy.public_aggregation_headers:
             continue
-        if header.source_header.startswith(_DEFERRED_UPSTREAM_SUPPORT_PREFIXES):
+        if header.source_header.startswith(tuple(policy.deferred_upstream_support_prefixes)):
             continue
         closure = _dependency_closure(header.source_header, dep_map)
         missing_counts = _classify_candidate_dependency_counts(
@@ -602,6 +591,7 @@ def _build_batch_candidates(
             target_root=target_root,
             target_repo_prefix=target_repo_prefix,
             segment_substitutions=segment_substitutions,
+            policy=policy,
         )
         test_counts = _test_kind_counts(header.mapped_tests, test_kind_by_path)
         host_suitability, kernel_suitability, reasons = _candidate_suitability(test_counts)
@@ -649,6 +639,17 @@ def _ledger_map(entries: list[LedgerStatusEntry]) -> dict[str, str]:
     return {entry.key: entry.status for entry in entries}
 
 
+def _max_status(*candidates: str | None) -> str | None:
+    """在若干候选状态里取「最高已确认」的一个（用于合并 ledger 与自动状态证据）。"""
+    best: str | None = None
+    best_rank = -1
+    for candidate in candidates:
+        rank = _STATUS_RANK.get(candidate or "", -1)
+        if rank > best_rank:
+            best, best_rank = candidate, rank
+    return best
+
+
 def build_migration_status_report(
     *,
     inventory: HeaderInventoryReport,
@@ -658,10 +659,20 @@ def build_migration_status_report(
     ledger_path: str | Path | None = None,
     target_repo_prefix: str = _TARGET_STD_PREFIX,
     segment_substitutions: list[dict] | None = None,
+    state_status_map: dict[str, str] | None = None,
+    policy: MigrationPolicy | None = None,
 ) -> MigrationStatusReport:
+    """汇总迁移状态报告。
+
+    `state_status_map`（可选）：由 `core.migration_state` 自动维护的 {source_header: status}
+    验证证据（host/kernel 实测通过 + 源未变）。它与手写 ledger **同级**参与状态判定，取二者
+    里更高的已确认状态。这让 闭包能在没有手写 ledger 的情况下识别「已验证、可跳过」的依赖。
+    """
     target_root = Path(target_repo).resolve()
+    policy = policy or default_migration_policy()
     ledger_entries = parse_migration_ledger_statuses(ledger_path) if ledger_path else []
     ledger = _ledger_map(ledger_entries)
+    state_status_map = state_status_map or {}
     test_map = {mapping.header: mapping.tests for mapping in test_index.mappings}
     test_kind_by_path = {entry.relative_path: entry.kind for entry in test_index.tests}
     dep_map = {entry.header: entry.dependencies for entry in dep_graph.graph}
@@ -681,15 +692,25 @@ def build_migration_status_report(
         host_exists = _host_test_exists(target_root, header.relative_path)
         kernel_exists = _kernel_spec_exists(target_root, header.relative_path)
         ledger_status = ledger.get(header.relative_path) or ledger.get(target_relpath)
+        state_status = state_status_map.get(header.relative_path)
+        # ledger（手写）与 state（自动验证证据）同级，取更高的已确认状态参与判定。
+        evidence_status = _max_status(ledger_status, state_status)
         status = _status_for(
             target_exists=target_exists,
-            ledger_status=ledger_status,
+            ledger_status=evidence_status,
             host_test_exists=host_exists,
             kernel_spec_exists=kernel_exists,
         )
         notes: list[str] = []
-        if ledger_status and not target_exists:
+        if evidence_status and not target_exists:
             notes.append("ledger_status_ignored_because_target_header_is_missing")
+        if (
+            target_exists
+            and state_status
+            and _STATUS_RANK.get(state_status, -1) >= _STATUS_RANK.get(ledger_status or "", -1)
+            and state_status in _LEDGER_STATUSES
+        ):
+            notes.append("validated_via_state_store")
 
         deps = dep_map.get(header.relative_path, [])
         missing: list[str] = []
@@ -705,6 +726,7 @@ def build_migration_status_report(
                     dependency=dep,
                     target_root=target_root,
                     target_repo_prefix=target_repo_prefix,
+                    policy=policy,
                 )
                 missing.append(dep)
                 missing_dependencies.append(
@@ -757,7 +779,7 @@ def build_migration_status_report(
                 ledger_status=ledger_status,
                 host_test_exists=host_exists,
                 kernel_spec_exists=kernel_exists,
-                classification=_target_only_classification(source_like),
+                classification=_target_only_classification(source_like, policy),
             )
         )
 
@@ -768,6 +790,7 @@ def build_migration_status_report(
         target_root=target_root,
         target_repo_prefix=target_repo_prefix,
         segment_substitutions=segment_substitutions,
+        policy=policy,
     )
 
     return MigrationStatusReport(

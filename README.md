@@ -28,8 +28,8 @@ ASC_agent 是一个面向 **CCCL 到 ACCL** 的迁移与验证助手。它以
 # 离线自检，不需要 API key 或 CANN。
 python3 main.py selftest
 
-# 迁移一个 CCCL 头文件并写入 ACCL 目标仓。
-python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h --show-model-io
+# 迁移一个 CCCL 头文件并写入 ACCL 目标仓（transform 为真实 libcudacxx 算子样例之一）。
+python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/transform.h --show-model-io
 
 # 迁移并运行 host/kernel 测试。
 python3 main.py convert --input <header> --with-tests --show-model-io
@@ -44,7 +44,8 @@ python3 main.py test --input <header> --show-model-io
 python3 main.py make-example clamp sort3 quad_fanout
 
 # 按依赖闭包迁移一个跨头依赖的算子（叶子优先；先看计划加 --plan-only，真实迁移加 --real-ai）。
-python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai --show-model-io
+# adjacent_find 为真实 libcudacxx 闭包样例：adjacent_find → comp → integral_constant。
+python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl --real-ai --with-tests --host-only --test-feedback-to-model --show-model-io
 
 # 只看某入口头的 include 依赖图与迁移顺序。
 python3 main.py dep-graph --cccl-repo repos/cccl
@@ -301,15 +302,16 @@ python3 main.py make-example --all --overwrite     # 全量刷新
 直接跳过/复用，每个待迁头还会拿到一份有界的依赖上下文包（`core/migration_context.py`）。
 
 ```bash
-# 先看计划（不调模型、不写盘）
-python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --plan-only
-# 真实迁移整条闭包并写入 ACCL
-python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl --real-ai --show-model-io
+# 先看计划（不调模型、不写盘）——adjacent_find 为真实 libcudacxx 闭包样例。
+python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl --plan-only
+# 真实迁移整条闭包并写入 ACCL（叶子优先序：integral_constant → comp → adjacent_find）
+python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl --real-ai --show-model-io
 
-# 一条命令：按依赖闭包 leaf-first 改写，并紧跟每个算子跑 host + kernel 测试。
-# 默认「失败即停」（某算子测试失败则不再改写其依赖方）；加 --continue-on-test-failure 改为记录并继续。
-python3 main.py dependency-convert --entry-header __numeric/spread3.h --cccl-repo repos/cccl \
-    --real-ai --with-tests --test-feedback-to-model --show-model-io
+# 一条命令：按依赖闭包 leaf-first 改写，并紧跟每个算子跑 host(+kernel) 测试。
+# 默认「失败即停」；--defer-dependents-on-failure 改为只延期失败头的下游、独立分支继续；
+# --verify-includes[-strict] 在每个头改写后做自包含 include 编译自检。
+python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl \
+    --real-ai --with-tests --host-only --test-feedback-to-model --verify-includes --show-model-io
 ```
 
 **从零开始**：闭包会跳过目标仓已存在的算子头，因此真正"从头跑"前需先清空已迁移的算子头
@@ -327,8 +329,57 @@ find repos/accl/asc-stl/include/asc/std -name '*.h' -delete
 `items[].test_result` 与顶层 `failed_test_headers`）。
 > 环境类失败（无 `cannsim`、缺驱动等）与 prepare/dry-run 一律不计为失败，不会在开发机上误停整条闭包。
 
-仓内自带一条验证该能力的依赖链测试用例：`__numeric/spread3.h → range_width.h → abs_diff.h`
+仓内自带一条**合成**依赖链 fixture：`__numeric/spread3.h → range_width.h → abs_diff.h`
 （叶子优先序 `max, min, abs_diff, range_width, spread3`），实测闭包迁移 + host + kernel 仿真均通过。
+
+此外，源仓内还放入了一批从真实 libcudacxx 取来的算子样例，供端到端测试：
+
+- **8 个独立算子**（闭包=自身，对齐开发计划阶段 1 首批）：
+  `__algorithm/` 下 `all_of · any_of · none_of · find_if · find_if_not · for_each · copy_if · transform`，
+  各自带真实 `.pass.cpp` 测试（位于 `libcudacxx/test/libcudacxx/std/__algorithm/<op>.pass.cpp`）。
+- **1 条真实依赖闭包（3 个头）**：`adjacent_find → comp → integral_constant`
+  （叶子优先序 `integral_constant, comp, adjacent_find`）。其中 `comp`、`integral_constant` 为内部
+  支撑头（编译期/算法助手，仅做头迁移），入口算子 `adjacent_find` 带真实测试。这条用于检验
+  跨头依赖闭包在**真实 CCCL 头**上的端到端迁移（宏/命名空间映射 + 叶子优先 + 测试改写）。
+
+## 闭环增量：能测 → 能扩（迁移状态自动回写）
+
+此前「测试通过」的结论只落在一次性报告里，从未回写到驱动「跳过/增量」的状态——闭包每次都把
+全部依赖**从头重迁**（烧模型调用，且可能用更差的新初稿覆盖上次已通过的产物）。现在 host/kernel
+测试通过后，结论自动写入 `outputs/migration_state.json`（`core/migration_state.py`），并被
+`build_migration_status_report` 当作与手写 ledger **同级**的验证证据读取：
+
+- **自动跳过已验证依赖**：闭包遇到状态为 `host_passed/kernel_passed/full_passed` 的依赖直接复用，
+  不再重迁——无需任何手写 ledger。
+- **源新鲜度**：状态记录里存了 CCCL 源头的内容哈希；源一旦变化，该头不再算「已验证」，下次自动重迁
+  （真正的增量，而非「目标存在就跳过」）。
+- 仅在「真实跑了测试且按所测维度全部通过」时记录；dry-run / prepare-only / mock / 环境类失败不写。
+
+## 新增门禁与韧性（闭包更稳、失败更可解释）
+
+- **自包含 include 校验门**（`core/verify_includes.py`，roadmap R1.3）：每个算子改写后，把目标头单独
+  `g++ -fsyntax-only` 编一次，**在最便宜的阶段**抓出「缺依赖 / include 路径不一致」（典型
+  `'asc/std/__utility/pair.h' file not found`），而不是拖到 kernel cannsim 才暴露。无 g++ 自动跳过。
+  命令加 `--verify-includes`（结果写入报告）；`--verify-includes-strict` 则把「不自包含」按失败处理。
+- **局部可用、整体延期**（`--defer-dependents-on-failure`）：某算子失败时，只延期**真正依赖它**的下游
+  （按依赖图算传递闭包），独立分支照常迁移——兑现计划阶段 5 的分类交付，取代旧的「一个失败全停」。
+  报告新增 `deferred_headers`。默认仍「失败即停」；`--continue-on-test-failure` 为另一极端（全推进）。
+- **预处理感知 include 扫描**（`core/inventory.py`）：`#if 0` 死块内的 include 不再被误当作硬依赖
+  （消除过包含）；条件块（`#ifdef` 等）内的依赖单独记入 `conditional_includes`。未知条件按**过包含**
+  处理（`#if`/`#else` 两分支都计入），宁可多迁也不漏真实依赖。
+
+## 迁移策略单一事实源（config 驱动）
+
+延期前缀、bootstrap 手写覆盖、兼容包装、公开伞头等**迁移策略**此前以字面量散落在 `pipeline.py` 与
+`migration_status.py`（两处各自维护、易漂移）。现统一到 `config.migration_policy`
+（`core/config.py: MigrationPolicy`），`config/settings.yaml` 可整组覆盖，缺省回退内置默认。
+
+## 工程化底座（可复现、可继续扩展）
+
+- `pyproject.toml`：pytest 与 ruff 配置；`pip install -e .[dev]` 装齐开发依赖。
+- `.github/workflows/ci.yml`：push / PR 上跑 **离线单测 + selftest**（硬门禁，不调模型/不需 CANN），
+  lint 为建议性（不阻断，待代码逐步收敛后再收紧）。
+- 环境依赖型用例（如基础依赖层语义编译）在数据前提缺失时**自动跳过**而非标红，保证全套件可在干净检出上绿。
 
 ## kernel SOC 版本（与本机 CANN 匹配）
 

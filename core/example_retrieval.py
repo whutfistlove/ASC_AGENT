@@ -32,14 +32,40 @@ def _read(path: str) -> str:
         return ""
 
 
-def _score(query_name: str, query_tokens: set[str], cand_name: str, cand_tokens: set[str]) -> float:
-    """相关度打分：同名最高，名称子串亲和次之，再叠加源文本 token Jaccard 重叠。"""
+def _shape_signature(text: str) -> str:
+    """从源/测试文本粗略推断算子形态，用于「同形态」few-shot 检索加权。
+
+    确定性、容错的粗分类（宁可判错也不抛错）：
+      * ``multi_return``：返回 pair/tuple（如 minmax）——多输出形态；
+      * ``inplace_void``：返回 void 的函数模板（如 swap/iter_swap）——原地、无返回值；
+      * ``value``：其余（二元/一元返回值，如 max/clamp）。
+    形态匹配给一个**温和**的加权（介于名称亲和与同名之间），只在相近候选间起决胜作用。
+    """
+    t = text or ""
+    if re.search(r"\b(pair|tuple)\s*<", t):
+        return "multi_return"
+    if re.search(r"\bvoid\s+[A-Za-z_]\w*\s*\(", t):
+        return "inplace_void"
+    return "value"
+
+
+def _score(
+    query_name: str,
+    query_tokens: set[str],
+    cand_name: str,
+    cand_tokens: set[str],
+    query_shape: str = "",
+    cand_shape: str = "",
+) -> float:
+    """相关度打分：同名最高，名称子串亲和次之，叠加源文本 token Jaccard 重叠 + 同形态加权。"""
     score = 0.0
     if cand_name and query_name:
         if cand_name == query_name:
             score += 1000.0           # 同名算子（如迁 swap 命中 swap 示例）最相关
         elif cand_name in query_name or query_name in cand_name:
             score += 30.0             # minmax ~ min / max 这类名称亲和
+    if query_shape and cand_shape and query_shape == cand_shape:
+        score += 25.0                 # 同形态（如都为原地 void / 都为多返回）更可迁移借鉴
     if query_tokens and cand_tokens:
         inter = len(query_tokens & cand_tokens)
         union = len(query_tokens | cand_tokens)
@@ -52,9 +78,14 @@ def _rank(candidates: list[dict], *, query_name: str, query_text: str,
           text_of, k: int) -> list[dict]:
     """按相关度排序取 top-k。稳定排序：同分保持原始顺序（可复现）。"""
     qtokens = _tokens(query_text)
+    qshape = _shape_signature(query_text)
     scored = []
     for idx, c in enumerate(candidates):
-        s = _score(query_name, qtokens, c.get("name", ""), _tokens(text_of(c)))
+        cand_text = text_of(c)
+        s = _score(
+            query_name, qtokens, c.get("name", ""), _tokens(cand_text),
+            query_shape=qshape, cand_shape=_shape_signature(cand_text),
+        )
         scored.append((s, -idx, c))
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
     return [c for _, _, c in scored[: max(1, k)]]

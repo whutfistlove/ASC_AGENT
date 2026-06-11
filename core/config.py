@@ -143,7 +143,55 @@ DEFAULTS: dict[str, Any] = {
         "fix_directive_spacing": True,
         "ensure_trailing_newline": True,
     },
+    # 迁移策略（此前散落在 pipeline.py / migration_status.py 的字面量，现收敛到单一事实源）：
+    #  - deferred_upstream_support_prefixes：这些前缀下的底层支撑头延期迁移（除非被 bootstrap 覆盖）。
+    #  - bootstrap_manual_coverage：手写一次、长期复用的基础设施头（源头 -> 目标仓内文件名）。
+    #  - target_only_compatibility_wrappers：目标仓内以兼容包装提供、无需逐字迁移的源头。
+    #  - public_aggregation_headers：公开伞头，坚持「已验证才暴露」，缺依赖不算真实缺口。
+    "migration_policy": {
+        "deferred_upstream_support_prefixes": ["__cccl/", "__internal/", "__support/", "detail/"],
+        "bootstrap_manual_coverage": {"detail/__config": "__config"},
+        "target_only_compatibility_wrappers": ["__algorithm/swap.h", "__numeric/gcd.h", "__numeric/lcm.h"],
+        "public_aggregation_headers": [
+            "algorithm", "functional", "iterator", "numeric", "type_traits", "utility",
+        ],
+    },
 }
+
+
+# --------------------------------------------------------------------------- #
+# 迁移策略（单一事实源；pipeline 与 migration_status 共用）
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class MigrationPolicy:
+    deferred_upstream_support_prefixes: tuple[str, ...]
+    bootstrap_manual_coverage: dict[str, str]
+    target_only_compatibility_wrappers: frozenset[str]
+    public_aggregation_headers: frozenset[str]
+
+    @classmethod
+    def from_raw(cls, raw: dict | None) -> "MigrationPolicy":
+        raw = raw or {}
+        base = DEFAULTS["migration_policy"]
+        return cls(
+            deferred_upstream_support_prefixes=tuple(
+                raw.get("deferred_upstream_support_prefixes", base["deferred_upstream_support_prefixes"])
+            ),
+            bootstrap_manual_coverage=dict(
+                raw.get("bootstrap_manual_coverage", base["bootstrap_manual_coverage"])
+            ),
+            target_only_compatibility_wrappers=frozenset(
+                raw.get("target_only_compatibility_wrappers", base["target_only_compatibility_wrappers"])
+            ),
+            public_aggregation_headers=frozenset(
+                raw.get("public_aggregation_headers", base["public_aggregation_headers"])
+            ),
+        )
+
+
+def default_migration_policy() -> MigrationPolicy:
+    """无 Config 上下文时（如 migration_status 的纯函数默认值）使用的内置策略。"""
+    return MigrationPolicy.from_raw(None)
 
 
 # --------------------------------------------------------------------------- #
@@ -435,6 +483,11 @@ class Config:
     @property
     def normalize_options(self) -> dict:
         return self.raw.get("normalize", {})
+
+    @property
+    def migration_policy(self) -> "MigrationPolicy":
+        """迁移策略（延期前缀 / bootstrap 覆盖 / 兼容包装 / 公开伞头），单一事实源。"""
+        return MigrationPolicy.from_raw(self.raw.get("migration_policy"))
 
     def skill_path(self, name: str) -> Path:
         return self.project_root / "skills" / name

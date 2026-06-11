@@ -106,3 +106,11 @@ test_examples:
 normalize:
   fix_directive_spacing: true
   ensure_trailing_newline: true
+
+# 迁移策略（单一事实源；不写则用 core/config.py 的内置默认）。整组覆盖某项即可，
+# 例如想把某前缀纳入/移出「延期」范围、或新增手写 bootstrap 头时改这里，无需动 Python。
+# migration_policy:
+#   deferred_upstream_support_prefixes: ["__cccl/", "__internal/", "__support/", "detail/"]
+#   bootstrap_manual_coverage: { "detail/__config": "__config" }
+#   target_only_compatibility_wrappers: ["__algorithm/swap.h", "__numeric/gcd.h", "__numeric/lcm.h"]
+#   public_aggregation_headers: ["algorithm", "functional", "iterator", "numeric", "type_traits", "utility"]

@@ -17,6 +17,16 @@
   `core/scaffold_env.py` 环境片段；删除签入的 `000`–`004` 脚本。
 - **合成复杂算子**：`sort3`（3 输入 / 3 输出、分支排序网络、整数精确）入源仓与批量清单，
   用于压测迁移管线的多 IO / dtype / 独立 golden。
+- **闭环增量（能测 → 能扩）**：host/kernel 通过结论自动回写 `outputs/migration_state.json`
+  （`core/migration_state.py`），并被 `build_migration_status_report` 作为验证证据消费——闭包据此
+  **自动跳过已验证且源未变的依赖**（无需手写 ledger），源变则按内容哈希自动重迁（真正增量）。
+- **自包含 include 门**（R1.3 落地）：`core/verify_includes.py` + `dependency-convert --verify-includes`，
+  改写后立刻 `g++ -fsyntax-only` 单头编译，便宜地抓缺依赖；`--verify-includes-strict` 计失败。
+- **局部可用、整体延期**：`--defer-dependents-on-failure` 只延期失败头的传递下游，独立分支继续。
+- **预处理感知扫描**：`#if 0` 死块不再过包含；条件块依赖单列 `conditional_includes`。
+- **迁移策略单一事实源**：`config.migration_policy`（`MigrationPolicy`）收敛了原先散落两处的延期前缀/
+  bootstrap 覆盖/兼容包装/公开伞头字面量。
+- **工程化底座**：`pyproject.toml` + GitHub Actions CI（离线单测 + selftest 硬门禁，lint 建议性）。
 
 ---
 
@@ -59,7 +69,7 @@ minmax.h:10:10: fatal error: 'asc/std/__utility/pair.h' file not found
    - 路径/guard 仍由 `path_mapper` 推导（`__utility/pair.h` → `asc/std/__utility/pair.h`），
      段替换规则沿用 `segment_substitutions`。
    - 已迁移过的头跳过（按 `target_relpath` 去重），避免重复调用模型。
-3. **迁移产物自洽校验（扩展 `core/operator_test.py` 或新增 `verify_includes`）**
+3. **迁移产物自洽校验（已落地：`core/verify_includes.py` + `--verify-includes[-strict]`）**
    - 在跑 kernel 测试前，做一次**纯头自包含编译**（`g++ -fsyntax-only -I include`），
      提前抓出“缺依赖/路径不一致”，而不是等到 cannsim 阶段才暴露。
    - kernel 符号链接子集应覆盖依赖闭包涉及的所有子目录。
@@ -78,7 +88,8 @@ minmax.h:10:10: fatal error: 'asc/std/__utility/pair.h' file not found
 
 ### 影响面 / 风险
 
-- 模型调用次数随依赖数线性增加（成本上升）；可加“仅迁移缺失依赖”的增量模式。
+- 模型调用次数随依赖数线性增加（成本上升）；”仅迁移缺失依赖”的增量模式**已落地**
+  （`core/migration_state.py` 回写验证状态 + 源哈希新鲜度，闭包自动跳过已验证且未变的依赖）。
 - CCCL 真实依赖很深（`__config` / `__type_traits/*`），需设“迁移边界”白名单，
   对边界外的基础设施头采用**手写一次、长期复用**的策略，而非每次让模型重迁。
 

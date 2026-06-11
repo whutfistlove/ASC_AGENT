@@ -32,15 +32,10 @@ from core.path_mapper import (
     expected_guard_from_relpath,
 )
 from core.utils import save_text, read_text_file, call_model_maybe_tools
+from core.verify_includes import verify_header_self_contained
 
 
 SAFE_DEPENDENCY_SKIP_STATUSES = {"host_passed", "kernel_passed", "full_passed"}
-DEFERRED_UPSTREAM_SUPPORT_PREFIXES = (
-    "__cccl/",
-    "__internal/",
-    "__support/",
-    "detail/",
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -84,6 +79,7 @@ class DependencyAwareHeaderResult:
     status: str = ""
     run_result: dict = field(default_factory=dict)
     test_result: dict = field(default_factory=dict)
+    include_check: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -96,6 +92,7 @@ class DependencyAwareRunResult:
     rewritten_headers: list[str] = field(default_factory=list)
     skipped_headers: list[str] = field(default_factory=list)
     failed_test_headers: list[str] = field(default_factory=list)
+    deferred_headers: list[str] = field(default_factory=list)
     items: list[DependencyAwareHeaderResult] = field(default_factory=list)
     complete: bool = False
     error: str = ""
@@ -103,6 +100,7 @@ class DependencyAwareRunResult:
     def to_dict(self) -> dict:
         return {
             "complete": self.complete,
+            "deferred_headers": list(self.deferred_headers),
             "entry_header": self.entry_header,
             "error": self.error,
             "items": [item.to_dict() for item in self.items],
@@ -111,6 +109,26 @@ class DependencyAwareRunResult:
             "skipped_headers": list(self.skipped_headers),
             "failed_test_headers": list(self.failed_test_headers),
         }
+
+
+def _transitive_dependents(target: str, dep_map: dict[str, list[str]], universe: set[str]) -> set[str]:
+    """返回 `universe` 内所有（传递地）依赖 `target` 的 header。
+
+    用于「局部可用、整体延期」：某 leaf 失败时，只跳过真正需要它的下游，独立分支照常推进。
+    """
+    dependents: set[str] = set()
+    changed = True
+    blocked = {target}
+    while changed:
+        changed = False
+        for header in universe:
+            if header in blocked:
+                continue
+            if any(dep in blocked for dep in dep_map.get(header, [])):
+                blocked.add(header)
+                dependents.add(header)
+                changed = True
+    return dependents
 
 
 def _dep_map(dep_graph) -> dict[str, list[str]]:
@@ -137,9 +155,11 @@ def _dependency_order_including_entry(entry_header: str, dep_graph) -> list[str]
 
 
 def _manual_bootstrap_cover(header: str, config: Config) -> str | None:
-    if header != "detail/__config":
+    """手写一次、长期复用的基础设施头（策略来自 config.migration_policy，单一事实源）。"""
+    covered = config.migration_policy.bootstrap_manual_coverage.get(header)
+    if not covered:
         return None
-    target_relpath = str(Path(config.target_repo_prefix) / "__config")
+    target_relpath = str(Path(config.target_repo_prefix) / covered)
     if (Path(config.target_repo) / target_relpath).exists():
         return target_relpath
     return None
@@ -149,7 +169,7 @@ def _deferred_support_reason(header: str, config: Config) -> str | None:
     covered_by = _manual_bootstrap_cover(header, config)
     if covered_by:
         return f"covered_by_bootstrap_manual:{covered_by}"
-    if header.startswith(DEFERRED_UPSTREAM_SUPPORT_PREFIXES):
+    if header.startswith(tuple(config.migration_policy.deferred_upstream_support_prefixes)):
         return "deferred_upstream_support_only"
     return None
 
@@ -285,7 +305,7 @@ class Pipeline:
         if cfg.draft_samples > 1:
             data, raw, scores = best_of_n(
                 _draft_once, _parse_draft,
-                lambda d: score_header_code(d["rewritten_code"], guard),
+                lambda d: score_header_code(d["rewritten_code"], guard, toolbox=toolbox),
                 n=cfg.draft_samples,
             )
             self._log(f"best-of-{cfg.draft_samples} 初稿择优：scores={scores}")
@@ -336,6 +356,9 @@ class Pipeline:
         plan_only: bool = False,
         on_rewritten: Optional[Callable[[RunResult], tuple[bool, dict]]] = None,
         stop_on_test_failure: bool = True,
+        defer_dependents_on_failure: bool = False,
+        verify_includes: bool = False,
+        verify_includes_strict: bool = False,
     ) -> DependencyAwareRunResult:
         """Rewrite one entry header after its missing dependency closure.
 
@@ -349,13 +372,26 @@ class Pipeline:
         rewritten (leaf-first), receiving that header's `RunResult` and returning
         `(is_failure, test_result)`. The `test_result` is attached to the report
         item; when `is_failure` is true the header is recorded in
-        `failed_test_headers`, and if `stop_on_test_failure` is true the closure
-        stops before rewriting any dependents.
+        `failed_test_headers`.
+
+        Failure handling (precedence): if `defer_dependents_on_failure` is true,
+        a failed header poisons only its transitive dependents (recorded in
+        `deferred_headers`) while independent branches keep migrating — the
+        plan's "局部可用、整体延期". Otherwise, if `stop_on_test_failure` is true the
+        closure stops before any dependents; else it records and continues.
+
+        If `verify_includes` is true, each rewritten header is compiled
+        self-contained (`g++ -fsyntax-only`) right after it is written. The check
+        is attached to the report item; with `verify_includes_strict`, a header
+        whose includes do not resolve is treated as a failure (feeding the same
+        defer/stop logic) — catching missing dependencies at the cheap stage
+        instead of at cannsim.
         """
         skip_statuses = set(skip_statuses or SAFE_DEPENDENCY_SKIP_STATUSES)
         result = DependencyAwareRunResult(entry_header=entry_header)
         status_by_header = {entry.source_header: entry for entry in status_report.headers}
         header_root = Path(inventory.header_root)
+        closure_dep_map = _dep_map(dep_graph)
 
         try:
             ordered_headers = _dependency_order_including_entry(entry_header, dep_graph)
@@ -365,6 +401,18 @@ class Pipeline:
             return result
 
         result.ordered_headers = ordered_headers
+        closure_universe = set(ordered_headers)
+        poisoned: dict[str, str] = {}  # header -> 触发它被延期的失败 leaf
+
+        def _register_failure(failed_header: str) -> bool:
+            """记录一个失败 header，并按策略决定是否延期其下游 / 是否停。返回 True=应停止整条闭包。"""
+            if failed_header not in result.failed_test_headers:
+                result.failed_test_headers.append(failed_header)
+            if defer_dependents_on_failure:
+                for dependent in _transitive_dependents(failed_header, closure_dep_map, closure_universe):
+                    poisoned.setdefault(dependent, failed_header)
+                return False
+            return stop_on_test_failure
         self._log(
             f"dependency-aware order for {entry_header}: "
             + " -> ".join(ordered_headers)
@@ -376,6 +424,19 @@ class Pipeline:
             target_relpath = status.target_relpath if status else ""
             status_value = status.status if status else ""
             is_entry = header == entry_header
+            if header in poisoned:
+                item = DependencyAwareHeaderResult(
+                    source_header=header,
+                    input_path=str(input_path),
+                    target_relpath=target_relpath,
+                    action="would_defer" if plan_only else "deferred",
+                    reason=f"blocked_by_failed_dependency:{poisoned[header]}",
+                    status=status_value,
+                )
+                result.items.append(item)
+                result.deferred_headers.append(header)
+                self._log(f"[defer] {header}: {item.reason}")
+                continue
             if status and status.target_exists and status.status in skip_statuses:
                 item = DependencyAwareHeaderResult(
                     source_header=header,
@@ -445,6 +506,27 @@ class Pipeline:
                 )
                 result.items.append(item)
                 result.rewritten_headers.append(header)
+
+                # 自包含 include 门：把目标头单独编一次，便宜地抓「缺依赖 / 路径不一致」，
+                # 而不是拖到 kernel cannsim 才暴露。无 g++ 即跳过；strict 下不自包含按失败处理。
+                if verify_includes and write_to_repo:
+                    check = verify_header_self_contained(
+                        target_repo=self.config.target_repo,
+                        target_relpath=run_result.target_relpath,
+                    )
+                    item.include_check = check.to_dict()
+                    if check.ran and not check.ok:
+                        miss = ", ".join(check.missing_includes) or "见诊断"
+                        self._log(f"[verify-includes] {header}: 不自包含（缺: {miss}）")
+                        if verify_includes_strict:
+                            item.action = "failed_include_check"
+                            item.reason = f"includes_unresolved:{miss}"
+                            if _register_failure(header):
+                                result.error = f"{header}: 自包含 include 校验失败（{miss}）"
+                                self._log(f"[verify-fail] {result.error}")
+                                return result
+                            continue  # 已按策略延期下游：不再对该头跑测试
+
                 if on_rewritten is not None:
                     try:
                         is_failure, test_result = on_rewritten(run_result)
@@ -454,8 +536,7 @@ class Pipeline:
                         self._log(f"[test-error] {header}: {test_result['error']}")
                     item.test_result = test_result or {}
                     if is_failure:
-                        result.failed_test_headers.append(header)
-                        if stop_on_test_failure:
+                        if _register_failure(header):
                             result.error = f"{header}: host/kernel 测试失败（默认失败即停）"
                             self._log(f"[test-fail] {result.error}")
                             return result

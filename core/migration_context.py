@@ -457,6 +457,7 @@ def build_migration_context_pack_from_scans(
     target_repo_prefix: str,
     segment_substitutions: list[dict] | None = None,
     limits: dict | None = None,
+    state_status_map: dict[str, str] | None = None,
 ) -> dict:
     from core.dep_graph import scan_dependency_graph
     from core.inventory import scan_header_inventory
@@ -474,6 +475,7 @@ def build_migration_context_pack_from_scans(
         ledger_path=ledger_path,
         target_repo_prefix=target_repo_prefix,
         segment_substitutions=segment_substitutions,
+        state_status_map=state_status_map,
     )
     return build_migration_context_pack(
         entry_header=entry_header,

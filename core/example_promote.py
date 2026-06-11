@@ -132,6 +132,22 @@ def promote_operator(
     result: dict = {"op": op_name, "module": art.module, "header_written": False,
                     "test_written": False, "skipped": []}
 
+    # 实测验证门禁：若 migration_state 里**有**该算子的记录但状态不是 host/kernel 通过，
+    # 拒绝晋升（避免把「编得过但从未真正测过 / 测过没过」的产物当金标准）。无记录则不拦
+    # （可能在别的机器上测过），退回静态门禁——保持既有 curation 行为，只增不减严格度。
+    if validate and art.module:
+        from core.migration_state import (
+            DEFAULT_STATE_FILENAME,
+            VALIDATED_STATUSES,
+            MigrationStateStore,
+        )
+
+        store = MigrationStateStore.load(config.output_dir / DEFAULT_STATE_FILENAME)
+        entry = store.headers.get(f"{art.module}/{op_name}.h")
+        if entry is not None and entry.status not in VALIDATED_STATUSES:
+            result["skipped"].append(f"promotion_blocked_state_status:{entry.status}")
+            return result
+
     # 先决定测试是否可晋升（落盘前过质量门禁）：门禁不过则**跳过测试**（不报错），
     # 头仍照常晋升——坏测试不进库，好头照样复用。minmax 的「假绿」host 测试即被此拦下。
     spec = None

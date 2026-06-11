@@ -46,7 +46,7 @@ cannsim -s Ascend950
 只迁移头文件：
 
 ```bash
-python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h --show-model-io
+python3 main.py convert --input repos/cccl/libcudacxx/include/cuda/std/__algorithm/transform.h --show-model-io
 ```
 
 迁移并运行测试：

@@ -1,0 +1,46 @@
+# ASC_agent 工程配置（单一事实源）。
+# 历史上没有 pyproject/CI/lint；这里补齐「可复现、可继续扩展」（阶段 8 交付要求）的底座。
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asc-agent"
+version = "0.1.0"
+description = "CCCL → ACCL 标准库自动迁移 / 验证 / 修复 / 度量产线"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+# 离线单测目录；conftest.py 已把仓根加入 sys.path。
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+# 仅扫项目自身代码；第三方源仓与生成产物不纳入风格门禁。
+extend-exclude = ["repos", "outputs", "examples", "build"]
+
+[tool.ruff.lint]
+# 先选高信号规则（pyflakes 真错 + import 排序 + 常见 bug 类），其余留待逐步收敛。
+# CI 中 lint 为「建议性」（不阻断），随代码清理可逐步收紧并转为门禁。
+select = ["E9", "F", "I", "B"]
+ignore = [
+    "E501",   # 行宽：含大量中文注释，暂不强制
+    "B008",   # 默认参数中调用函数：本仓有意为之的少量用法
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F811", "F401"]
