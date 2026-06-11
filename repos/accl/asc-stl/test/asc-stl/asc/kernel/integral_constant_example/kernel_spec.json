@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<int32_t>(i);",
+  "element_op_code": "asc::std::integral_constant<int, 42> ic; out0_val = ic();",
+  "golden_code": "expected0 = 42;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

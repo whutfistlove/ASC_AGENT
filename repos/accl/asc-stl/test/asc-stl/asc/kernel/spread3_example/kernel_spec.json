@@ -1,8 +1,0 @@
-{
-  "input_init": "h_in0[i] = (i * 7 + 3) % 21 - 10; h_in1[i] = (i * 13 + 1) % 21 - 10; h_in2[i] = (i * 19 + 5) % 21 - 10;",
-  "element_op_code": "asc::std::spread3(in0_val, in1_val, in2_val, out0_val, out1_val);",
-  "golden_code": "int32_t lo = in0_ref < in1_ref ? (in0_ref < in2_ref ? in0_ref : in2_ref) : (in1_ref < in2_ref ? in1_ref : in2_ref);\nint32_t hi = in0_ref > in1_ref ? (in0_ref > in2_ref ? in0_ref : in2_ref) : (in1_ref > in2_ref ? in1_ref : in2_ref);\nexpected0 = lo;\nexpected1 = hi - lo;",
-  "gm_inputs": 3,
-  "gm_outputs": 2,
-  "dtype": "int32_t"
-}

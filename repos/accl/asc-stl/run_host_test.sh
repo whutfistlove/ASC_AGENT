@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host test for spread3. (生成自 core/scaffold_scripts.py)
+# Host test for integral_constant. (生成自 core/scaffold_scripts.py)
 
 # ---- 统一环境准备（core/scaffold_env.py 生成，host/kernel 共用）----
 if command -v conda >/dev/null 2>&1; then
@@ -44,5 +44,5 @@ fi
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-make spread3_host_test
-ctest -R "host\.spread3$" -V
+make integral_constant_host_test
+ctest -R "host\.integral_constant$" -V
