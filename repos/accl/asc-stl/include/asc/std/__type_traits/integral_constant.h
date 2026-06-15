@@ -9,7 +9,7 @@
 
 _ASC_STD_BEGIN
 
-template <typename _Tp, _Tp __v>
+template <class _Tp, _Tp __v>
 struct integral_constant
 {
   static constexpr const _Tp value = __v;

@@ -20,6 +20,7 @@ from core.best_of_n import best_of_n, score_header_code
 from core.config import Config
 from core.example_retrieval import select_header_examples
 from core.fix_once import run_single_fix_from_log
+from core.knowledge_base import load_knowledge_base
 from core.migration_context import build_migration_context_pack
 from core.model_client import (
     BaseModelClient,
@@ -200,7 +201,8 @@ class Pipeline:
     def _build_initial_request(self, input_path: Path, source_text: str,
                                module_hint: str, target_relpath: str, guard: str,
                                examples: list[tuple[str, str]],
-                               context_pack: Optional[dict] = None) -> str:
+                               context_pack: Optional[dict] = None,
+                               knowledge: str = "") -> str:
         head = f"""【当前任务文件路径】
 {input_path}
 
@@ -222,6 +224,8 @@ class Pipeline:
                 + json.dumps(context_pack, ensure_ascii=False, indent=2, sort_keys=True)
                 + "\n"
             )
+        if knowledge.strip():
+            head += "\n" + knowledge.strip() + "\n"
         blocks = []
         for i, (cccl, accl) in enumerate(examples, 1):
             blocks.append(
@@ -272,8 +276,11 @@ class Pipeline:
             k=cfg.few_shot_top_k, enabled=cfg.examples_retrieval_enabled,
             exclude_self=True,  # 迁 X 不拿 X 自己的答案当示例（防泄漏）
         )
+        # 知识库注入：按当前头涉及的符号，检索命中的符号映射/语法/约束规则一并喂模型。
+        knowledge = load_knowledge_base(str(cfg.reference_dir)).render_block(source_text)
         request_text = self._build_initial_request(
-            input_path, source_text, module_hint, target_relpath, guard, examples, context_pack
+            input_path, source_text, module_hint, target_relpath, guard, examples,
+            context_pack, knowledge,
         )
         save_text(out / "model_request.md", request_text)
 

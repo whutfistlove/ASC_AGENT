@@ -43,6 +43,8 @@ DEFAULTS: dict[str, Any] = {
         "accl_repo": "${ACCL_REPO:-${PROJECT_ROOT}/repos/accl}",
         # 相对则相对于 PROJECT_ROOT
         "output_dir": "outputs",
+        # 可审计知识库（照搬自官方 cuda2ascend-simt：符号映射/语法/约束规则）。
+        "reference_dir": "${PROJECT_ROOT}/reference",
     },
     # 路径与命名映射规则（v2 里这部分是写死/缺失的）
     "mapping": {
@@ -346,6 +348,13 @@ class Config:
     @property
     def output_dir(self) -> Path:
         raw = self.raw["paths"]["output_dir"]
+        p = Path(raw)
+        return p if p.is_absolute() else (self.project_root / p)
+
+    @property
+    def reference_dir(self) -> Path:
+        """可审计知识库目录（reference/）。相对路径相对于 PROJECT_ROOT。"""
+        raw = self.raw["paths"].get("reference_dir", str(self.project_root / "reference"))
         p = Path(raw)
         return p if p.is_absolute() else (self.project_root / p)
 

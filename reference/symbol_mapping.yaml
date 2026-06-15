@@ -1,0 +1,132 @@
+# ---------------------------------------------------------------------------
+# CCCL (libcudacxx) -> ASC-STL 头文件层「符号 / 宏 / 命名空间 / 路径」映射知识库。
+#
+# 这是本项目所在层级（C++ 标准库头文件）的可审计映射，schema 风格对齐官方
+# reference/schema.md。官方 api-mapping/ 是 runtime/device 层（cudaMalloc 等），
+# 与本层不同级，仅作跨层参考；本文件才是 header 迁移真正会查的表。
+#
+# 维护约定（沿用官方）：本文件是 source of truth；每条记录保留 source / reviewed_by /
+# reviewed_at。always_inject=true 的记录对每个头都适用，会被注入到改写提示词里。
+# ---------------------------------------------------------------------------
+_meta:
+  layer: header
+  description: "CCCL libcudacxx -> ASC-STL symbol/macro/namespace/path mapping"
+  reviewed_at: "2026-06-15"
+
+# 符号 / 宏 / 命名空间映射。字段：
+#   cccl/asc   : 源 / 目标写法（asc 为 "(删除)" 表示该构造在 ASC-STL 中移除）
+#   kind       : namespace-macro | fn-qualifier | qualified-name | include-form | guard | drop
+#   status     : mapped | removed | partial
+#   always_inject : true 则对每个头都注入提示词（命名空间/修饰符这类通用规则）
+symbols:
+  - cccl: "_CCCL_BEGIN_NAMESPACE_CUDA_STD"
+    asc: "_ASC_STD_BEGIN"
+    kind: namespace-macro
+    status: mapped
+    always_inject: true
+    note: "命名空间起始宏"
+    source: ["examples/headers/max.accl.h", "examples/headers/os.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "_CCCL_END_NAMESPACE_CUDA_STD"
+    asc: "_ASC_STD_END"
+    kind: namespace-macro
+    status: mapped
+    always_inject: true
+    note: "命名空间结束宏"
+    source: ["examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "_CCCL_API"
+    asc: "_ASC_AICORE_FN"
+    kind: fn-qualifier
+    status: mapped
+    always_inject: true
+    note: "设备/通用函数修饰符。CCCL 的 [[nodiscard]] _CCCL_API constexpr 对应 ASC 的 _ASC_AICORE_FN constexpr"
+    source: ["examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "::cuda::std::"
+    asc: "asc::std::"
+    kind: qualified-name
+    status: mapped
+    always_inject: true
+    note: "完全限定名前缀；裸 cuda::std:: 同样映射为 asc::std::"
+    source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "#include <cuda/std/...>"
+    asc: '#include "asc/std/..."'
+    kind: include-form
+    status: mapped
+    always_inject: true
+    note: "尖括号系统头改为引号本地头；路径前缀 cuda/std -> asc/std（段替换 __cccl -> __asc 另见 segment_substitutions）"
+    source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "<cuda/std/detail/__config>"
+    asc: '"asc/std/__config"'
+    kind: include-form
+    status: mapped
+    always_inject: true
+    note: "顶层 __config 头的固定映射"
+    source: ["examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "_CUDA_STD_<...>_H  (header guard)"
+    asc: "ASC_STL_INCLUDE_ASC_STD_<...>_H_  (header guard)"
+    kind: guard
+    status: partial
+    always_inject: true
+    note: "header guard 不要手写，必须严格使用系统提供的 expected_header_guard（由 path_mapper 推导）"
+    source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "_CCCL_EXEC_CHECK_DISABLE"
+    asc: "(删除)"
+    kind: drop
+    status: removed
+    always_inject: true
+    note: "CCCL 的 host/device 执行检查抑制宏；ASC-STL 无对应物，直接删除"
+    source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "#include <cuda/std/__cccl/prologue.h> / <cuda/std/__cccl/epilogue.h>"
+    asc: "(删除)"
+    kind: drop
+    status: removed
+    always_inject: true
+    note: "CCCL 的 prologue/epilogue 配对包含；ASC-STL 不使用，删除"
+    source: ["examples/headers/max.cccl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+  - cccl: "_CCCL_IMPLICIT_SYSTEM_HEADER_* 的 #pragma system_header 块"
+    asc: "(删除，改用 #if defined(__CCE__) #define ASC_DEVICE_CODE)"
+    kind: drop
+    status: removed
+    always_inject: true
+    note: "CCCL 的隐式系统头 pragma 块整体删除；设备代码分支用 __CCE__ 守卫"
+    source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+
+# 路径段替换（与 core/config.py mapping.segment_substitutions 同源）。
+# path_mapper 据此把 cuda/std/__cccl/... 段改写为 asc/std/__asc/...。
+segment_substitutions:
+  - from: "__cccl"
+    to: "__asc"
+    source: ["core/config.py DEFAULTS.mapping.segment_substitutions"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-15"
+
+# 迁移策略（与 core/config.py DEFAULTS.migration_policy / MigrationPolicy 同源）。
+# 此处为可审计的外化记录；运行期当前仍由 config 提供默认值（见 reference/README.md 待办）。
+migration_policy:
+  deferred_upstream_support_prefixes: ["__cccl/", "__internal/", "__support/", "detail/"]
+  bootstrap_manual_coverage:
+    "detail/__config": "__config"
+  target_only_compatibility_wrappers: ["__algorithm/swap.h", "__numeric/gcd.h", "__numeric/lcm.h"]
+  public_aggregation_headers: ["algorithm", "functional", "iterator", "numeric", "type_traits", "utility"]
+  source: ["core/config.py DEFAULTS.migration_policy"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"

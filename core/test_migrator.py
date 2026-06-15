@@ -25,6 +25,7 @@ from typing import Optional
 from core.best_of_n import best_of_n, score_host_test_code
 from core.config import Config
 from core.example_retrieval import select_test_examples
+from core.knowledge_base import load_knowledge_base
 from core.model_client import BaseModelClient, extract_json_object
 from core.operator_kernel_scaffold import KernelScaffoldBuilder
 from core.test_index import CCCLTestIndexEntry, CCCLTestIndexReport
@@ -475,7 +476,9 @@ def build_test_migration_request(
     cccl_test_text: str,
     examples_block: str,
     upstream_test_plan_text: str = "",
+    knowledge_block: str = "",
 ) -> str:
+    knowledge_section = f"\n{knowledge_block.strip()}\n" if knowledge_block.strip() else ""
     return f"""【algo_name】
 {algo_name}
 
@@ -496,7 +499,7 @@ def build_test_migration_request(
 
 【real test-index 选择/延期计划】
 {upstream_test_plan_text}
-
+{knowledge_section}
 {examples_block}
 """
 
@@ -540,6 +543,10 @@ def migrate_operator_tests(
     examples_block = _build_examples_block(
         config, algo_name=algo_name, cccl_test_text=cccl_test_text
     )
+    # 知识库注入：以已迁移 ACCL 头 + CCCL 测试为查询，命中符号映射/约束（如 double dtype）。
+    knowledge_block = load_knowledge_base(str(config.reference_dir)).render_block(
+        accl_header_text + "\n" + cccl_test_text
+    )
     request_text = build_test_migration_request(
         algo_name=algo_name,
         include_path=include_path,
@@ -549,6 +556,7 @@ def migrate_operator_tests(
         cccl_test_text=cccl_test_text,
         examples_block=examples_block,
         upstream_test_plan_text=_format_upstream_test_plan(upstream_plan),
+        knowledge_block=knowledge_block,
     )
     save_text(out / "test_migrate_request.md", request_text)
 

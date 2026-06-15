@@ -1,7 +1,7 @@
-// auto-workload=full (n=16384, cores=8, inputs=1, outputs=2, dtype=int32_t)
+// auto-workload=full (n=16384, cores=8, inputs=2, outputs=1, dtype=int32_t)
 #include "acl/acl.h"
 #include "host.h"
-#include "asc/std/__type_traits/integral_constant.h"
+#include "asc/std/__algorithm/comp.h"
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -29,29 +29,29 @@ int main()
     CHECK_ACL(aclrtCreateStream(&stream));
 
     std::vector<int32_t> h_in0(n);
+    std::vector<int32_t> h_in1(n);
     std::vector<int32_t> h_out0(n);
-    std::vector<int32_t> h_out1(n);
     auto& h_x = h_in0;
-    std::vector<int32_t> h_y(n, (int32_t)0);
+    auto& h_y = h_in1;
     (void)h_x;
     (void)h_y;
     for (size_t i = 0; i < n; ++i) {
-        { h_in0[i] = (i * 7 + 3) % 19 - 9; }
+        { h_in0[i] = static_cast<int32_t>(i % 11) - 5; h_in1[i] = static_cast<int32_t>((i * 7 + 3) % 11) - 5; }
     }
 
     void* d_in0 = nullptr;
+    void* d_in1 = nullptr;
     void* d_out0 = nullptr;
-    void* d_out1 = nullptr;
     CHECK_ACL(aclrtMalloc(&d_in0, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc(&d_in1, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
     CHECK_ACL(aclrtMalloc(&d_out0, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
-    CHECK_ACL(aclrtMalloc(&d_out1, bytes, ACL_MEM_MALLOC_HUGE_FIRST));
 
     CHECK_ACL(aclrtMemcpy(d_in0, bytes, h_in0.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(d_in1, bytes, h_in1.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE));
 
-    asc_std_integral_constant_do(8, stream, static_cast<uint8_t*>(d_in0), static_cast<uint8_t*>(d_out0), static_cast<uint8_t*>(d_out1));
+    asc_std_comp_do(8, stream, static_cast<uint8_t*>(d_in0), static_cast<uint8_t*>(d_in1), static_cast<uint8_t*>(d_out0));
     CHECK_ACL(aclrtSynchronizeStream(stream));
     CHECK_ACL(aclrtMemcpy(h_out0.data(), bytes, d_out0, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
-    CHECK_ACL(aclrtMemcpy(h_out1.data(), bytes, d_out1, bytes, ACL_MEMCPY_DEVICE_TO_HOST));
 
     long print_samples = 8;
     if (const char* __ps = std::getenv("KERNEL_PRINT_SAMPLES")) {
@@ -60,21 +60,21 @@ int main()
     size_t mismatches = 0;
     for (size_t i = 0; i < n; ++i) {
         int32_t in0_ref = h_in0[i];
+        int32_t in1_ref = h_in1[i];
         int32_t x_ref = in0_ref;
-        int32_t y_ref = (int32_t)0;
+        int32_t y_ref = in1_ref;
         (void)x_ref;
         (void)y_ref;
         (void)in0_ref;
+        (void)in1_ref;
         int32_t expected0 = (int32_t)0;
-        int32_t expected1 = (int32_t)0;
         int32_t& expected = expected0;
         (void)expected;
         (void)expected0;
-        (void)expected1;
-        { expected0 = in0_ref + 42; expected1 = in0_ref + 42; }
+        { expected0 = (in0_ref < in1_ref) ? 1 : 0; }
         int32_t got0 = h_out0[i];
         if (print_samples < 0 || static_cast<long>(i) < print_samples) {
-            std::cout << "[kernel][integral_constant][" << i << "][out0]" << " in0=" << in0_ref
+            std::cout << "[kernel][comp][" << i << "]" << " in0=" << in0_ref << " in1=" << in1_ref
                       << " got=" << got0 << " expected=" << expected0 << std::endl;
         }
         if (got0 != expected0) {
@@ -84,26 +84,13 @@ int main()
                           << ", expected=" << expected0 << std::endl;
             }
         }
-
-        int32_t got1 = h_out1[i];
-        if (print_samples < 0 || static_cast<long>(i) < print_samples) {
-            std::cout << "[kernel][integral_constant][" << i << "][out1]" << " in0=" << in0_ref
-                      << " got=" << got1 << " expected=" << expected1 << std::endl;
-        }
-        if (got1 != expected1) {
-            ++mismatches;
-            if (mismatches <= 8) {
-                std::cerr << "Mismatch at i=" << i << ", out1, got=" << got1
-                          << ", expected=" << expected1 << std::endl;
-            }
-        }
     }
-    std::cout << "[kernel][integral_constant] checked " << n << " elements, mismatches "
+    std::cout << "[kernel][comp] checked " << n << " elements, mismatches "
               << mismatches << std::endl;
     if (mismatches != 0) {
         aclrtFree(d_in0);
+        aclrtFree(d_in1);
         aclrtFree(d_out0);
-        aclrtFree(d_out1);
         aclrtDestroyStream(stream);
         aclrtResetDevice(0);
         aclFinalize();
@@ -111,8 +98,8 @@ int main()
     }
 
     aclrtFree(d_in0);
+    aclrtFree(d_in1);
     aclrtFree(d_out0);
-    aclrtFree(d_out1);
     aclrtDestroyStream(stream);
     aclrtResetDevice(0);
     aclFinalize();

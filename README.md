@@ -45,7 +45,7 @@ python3 main.py make-example clamp sort3 quad_fanout
 
 # 按依赖闭包迁移一个跨头依赖的算子（叶子优先；先看计划加 --plan-only，真实迁移加 --real-ai）。
 # adjacent_find 为真实 libcudacxx 闭包样例：adjacent_find → comp → integral_constant。
-python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl --real-ai --with-tests --host-only --test-feedback-to-model --show-model-io
+python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl --real-ai --with-tests    --test-feedback-to-model --show-model-io
 
 # 只看某入口头的 include 依赖图与迁移顺序。
 python3 main.py dep-graph --cccl-repo repos/cccl
