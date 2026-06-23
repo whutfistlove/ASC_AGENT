@@ -5,8 +5,8 @@
 
 from pathlib import Path
 
-from core.config import Config
-from core.knowledge_base import KnowledgeBase, load_knowledge_base
+from core.common.config import Config
+from core.knowledge.knowledge_base import KnowledgeBase, load_knowledge_base
 
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / "reference"
@@ -32,6 +32,8 @@ def test_render_block_injects_universal_symbol_mappings():
     # always_inject 的通用符号映射对每个头都应出现
     assert "_ASC_STD_BEGIN" in block
     assert "_ASC_AICORE_FN" in block
+    assert "_LIBCUDACXX_BEGIN_NAMESPACE_STD" in block
+    assert "_CUDA_VSTD::" in block
     assert "符号 / 宏 / 命名空间映射" in block
 
 

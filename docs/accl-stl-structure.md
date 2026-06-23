@@ -2,22 +2,26 @@
 
 ---
 
-## 实现现状 vs 目标布局（务必先读）
+## 设计原则：1:1 镜像 libcudacxx（务必先读）
 
-本文件描述的是 **目标布局**（`std/` 提升为与 `asc/` 平级、`__cccl → common/__asc/` 移出 std 子树、
-对外 `<std/*>`）。但**当前代码实现的仍是另一套布局**：
+本文件描述的目标布局 **与 `libcudacxx` 的目录结构逐级一一对应**：`cuda/ → asc/`、`nv/ → ascend/`、
+`cuda/std/__cccl/ → asc/std/__asc/`，其余目录名 1:1 保留。**关键点：`std/` 仍嵌套在命名空间根
+`asc/` 之内**（即 `include/asc/std/`，对位 libcudacxx 的 `include/cuda/std/`）——**不**把 `std/`
+提升为与 `asc/` 平级，也**不**新增独立的 `common/` 顶层目录。这样目标仓的目录树与 libcudacxx
+**完全同构**，迁移只做「前缀替换 + 厂商词改名」，心智负担最小，也便于把上游 libcudacxx 整仓直接
+落到 `repos/cccl/libcudacxx/` 作源参照。
 
-| 维度 | 本文目标布局 | 代码当前实现（`config/settings.yaml`） |
+这套布局与代码实现完全一致（路径前缀在 `config/settings.yaml`，段替换/迁移策略在 `reference/symbol_mapping.yaml`）：
+
+| 维度 | 本文布局（镜像 libcudacxx） | 代码实现 |
 |---|---|---|
-| 目标前缀 | `libasccxx/include/std/...` | `asc-stl/include/asc/std/...`（`mapping.target_repo_prefix`） |
-| 底层配置目录 | `common/__asc/` | `asc/std/__asc/`（`mapping.segment_substitutions: __cccl→__asc`） |
+| 源前缀 | `libcudacxx/include/cuda/std/...` | `libcudacxx/include/cuda/std`（`mapping.source_repo_prefix`） |
+| 目标前缀 | `asc-stl/include/asc/std/...` | `asc-stl/include/asc/std`（`mapping.target_repo_prefix`） |
+| 底层配置目录 | `asc/std/__asc/`（⟵ `cuda/std/__cccl/`） | `asc/std/__asc/`（`reference/symbol_mapping.yaml segment_substitutions: __cccl→__asc`） |
 
-> 之所以没有在本轮直接把整棵树切到目标布局：(1) 这是有产品影响、且会重命名全部已迁移头/guard
-> 的高风险动作；(2) 本结构文档尚未提交、仍可能调整。**先把布局拍板再切**更稳妥。
-
-好消息是：路径/命名映射已**完全配置化**（`mapping.target_repo_prefix` / `segment_substitutions`
-驱动 `core/path_mapper.py`；迁移策略走 `config.migration_policy`）。因此真正切换布局是一次
-**配置编辑**（改 `target_repo_prefix` 与段替换规则）而非改代码——拍板后即可平滑迁移并跑全仓回归。
+路径/命名映射已**完全配置化**（`mapping.target_repo_prefix` / reference `segment_substitutions` 驱动
+`core/analysis/path_mapper.py`；迁移策略走 reference `migration_policy`），所以「布局即配置」：上表两列恒等，
+文档、配置与产物天然对齐，无需「先拍板再切」。
 
 ---
 
@@ -29,10 +33,9 @@
 |---|---|---|
 | 顶层 monorepo | `cccl/` | `accl/` |
 | 标准库（本库） | `libcudacxx/` | `libasccxx/` |
-| 标准库命名空间 / 路径 | `cuda::std` / `<cuda/std/*>` | `asc::std` / `<std/*>` |
+| 标准库命名空间 / 路径 | `cuda::std` / `<cuda/std/*>` | `asc::std` / `<asc/std/*>`（★`std/` 仍嵌套在 `asc/` 内） |
 | 扩展命名空间 / 路径 | `cuda::` / `<cuda/*>` | `asc::` / `<asc/*>` |
-| 共同引用 / 共享底层（★新增） | （并入 `cuda/std/__cccl/`） | `common/` / `<common/*>`（与 `std/`、`asc/` **平级**） |
-| 底层配置目录 | `cuda/std/__cccl/` | `common/__asc/`（⟵ 原 `asc/std/__asc/`，★移出 std 子树） |
+| 底层配置目录 | `cuda/std/__cccl/` | `asc/std/__asc/`（★仅改名，仍留在 `std/` 子树内） |
 | 厂商 target 派发 | `nv/` | `ascend/` |
 | device 注解 | `__host__ / __device__` | `__host__ / __aicore__` |
 
@@ -80,11 +83,11 @@ libcudacxx/                                   # → libasccxx/        NVIDIA 版
 │       ├── libcudacxx/                       # → test/utils/libasccxx/
 │       └── nvidia/                           # → test/utils/ascend/
 └── include/                                   # → 同名             对外公开头文件根
-    ├── cuda/                                  # → asc/             命名空间根 cuda::（★accl 侧仅扩展层；std/ 提升为与 asc/ 平级）
+    ├── cuda/                                  # → asc/             命名空间根 cuda::（→ asc::；std/ 仍嵌套其内）
     │   │
-    │   ├── std/                              # → std/（★提升为与 asc/ 平级）         cuda::std：符合 ISO C++ 的标准库（host + device）
+    │   ├── std/                              # → asc/std/（仍嵌套在 asc/ 内）        cuda::std：符合 ISO C++ 的标准库（host + device）
     │   │   │
-    │   │   ├── __cccl/                       # → common/__asc/           跨树底层配置宏（★改名，移出 std 子树到 common/）
+    │   │   ├── __cccl/                       # → __asc/           跨树底层配置宏（★仅改名，仍留在 std 子树内）
     │   │   │
     │   │   ├── __<facility>/  ×42            # → 同名 ×42         标准设施实现细节（私有头），目录名保留：
     │   │   │                                 #   __algorithm __atomic __barrier __bit __charconv __chrono __cmath __complex
@@ -173,30 +176,32 @@ asc_stl/                                         # 顶层 monorepo（对标 cccl
     │   └── utils/                            # ⟵ test/utils/   测试运行器/工具
     │       ├── libasccxx/                    # ⟵ test/utils/libcudacxx/   本库 lit 工具
     │       └── ascend/                       # ⟵ test/utils/nvidia/       厂商专属测试工具
-    └── include/                              # ⟵ include/   对外公开头文件根；★三者平级：std/（标准库）、asc/（扩展）、common/（共同引用）
-        ├── std/                              # ⟵ cuda/std/   asc::std：符合 ISO C++ 的标准库，可在 host 与 NPU 上编译
-        │   │                                 #   ★由 cuda/std/ 提升为 include/ 下与 asc/ 平级（不再嵌套在 asc/ 内）
-        │   ├── __<facility>/  ×42            # ⟵ cuda/std/__<facility>/  ×42   各标准设施的实现细节（私有头），目录名 1:1 保留
-        │   │                                 #   __algorithm __atomic __barrier __bit __charconv __chrono __cmath __complex
-        │   │                                 #   __concepts __cstddef __cstdlib __cstring __exception __execution __expected
-        │   │                                 #   __floating_point __format __functional __fwd __host_stdlib __internal __iterator
-        │   │                                 #   __latch __limits __linalg __mdspan __memory __new __numeric __optional __pstl
-        │   │                                 #   __random __ranges __semaphore __simd __string __system_error __thread
-        │   │                                 #   __tuple_dir __type_traits __utility __variant   （全量见 §2，无一改名）
-        │   │   ├── __atomic/{api,functions,platform,types,wait}/   # ⟵ 同路径   原子实现按 API/平台/类型/wait 分层
-        │   │   ├── __format/formatters/      # ⟵ cuda/std/__format/formatters/   各类型的 formatter 特化
-        │   │   ├── __pstl/asc/               # ⟵ cuda/std/__pstl/cuda/   并行算法后端目录（cuda→asc，★随命名空间改名）
-        │   │   └── __simd/specializations/   # ⟵ cuda/std/__simd/specializations/   SIMD 类型特化
+    └── include/                              # ⟵ include/   对外公开头文件根（与 libcudacxx 同构：顶层只有 asc/ 与 ascend/ 两个目录）
+        ├── asc/                              # ⟵ cuda/   命名空间根 asc::（对位 cuda/；标准库 std/ 与扩展层并存其内）
+        │   ├── std/                          # ⟵ cuda/std/   asc::std：符合 ISO C++ 的标准库，可在 host 与 NPU 上编译
+        │   │   │                             #   ★仍嵌套在 asc/ 内（对位 cuda/std/），不提升为顶层、不外置为 common/
+        │   │   ├── __asc/                    # ⟵ cuda/std/__cccl/   跨整棵树共享的底层配置宏（★仅改名 __cccl→__asc，仍留在 std 子树内）
+        │   │   │                             #   架构/编译器/可见性/方言判定 等；内含头文件全量见 §3
+        │   │   ├── __<facility>/  ×42        # ⟵ cuda/std/__<facility>/  ×42   各标准设施的实现细节（私有头），目录名 1:1 保留
+        │   │   │                             #   __algorithm __atomic __barrier __bit __charconv __chrono __cmath __complex
+        │   │   │                             #   __concepts __cstddef __cstdlib __cstring __exception __execution __expected
+        │   │   │                             #   __floating_point __format __functional __fwd __host_stdlib __internal __iterator
+        │   │   │                             #   __latch __limits __linalg __mdspan __memory __new __numeric __optional __pstl
+        │   │   │                             #   __random __ranges __semaphore __simd __string __system_error __thread
+        │   │   │                             #   __tuple_dir __type_traits __utility __variant   （全量见 §2，无一改名）
+        │   │   │   ├── __atomic/{api,functions,platform,types,wait}/   # ⟵ 同路径   原子实现按 API/平台/类型/wait 分层
+        │   │   │   ├── __format/formatters/  # ⟵ cuda/std/__format/formatters/   各类型的 formatter 特化
+        │   │   │   ├── __pstl/asc/           # ⟵ cuda/std/__pstl/cuda/   并行算法后端目录（cuda→asc，★随命名空间改名）
+        │   │   │   └── __simd/specializations/   # ⟵ cuda/std/__simd/specializations/   SIMD 类型特化
+        │   │   │
+        │   │   ├── detail/                   # ⟵ cuda/std/detail/   fork 自 libc++ 的实现层配置目录（std 私有）
+        │   │   │   └── __config              # ⟵ cuda/std/detail/__config   实现层总配置入口（单文件）；向下 #include <asc/std/__asc/...>
+        │   │   │
+        │   │   ├── <umbrella>                # ⟵ cuda/std/<umbrella>   无扩展名公共伞头，全部沿用：
+        │   │   │                             #   array atomic chrono cmath complex memory ranges tuple
+        │   │   │                             #   type_traits utility variant version …（对应上面的 __<facility>/）
+        │   │   └── algorithm.<op>.h          # ⟵ cuda/std/algorithm.<op>.h   单算子细分伞头（clamp/copy/find/sort/…）
         │   │
-        │   ├── detail/                       # ⟵ cuda/std/detail/   fork 自 libc++ 的实现层配置目录（std 私有）
-        │   │   └── __config                  # ⟵ cuda/std/detail/__config   实现层总配置入口（单文件）；仅向下 #include <common/__asc/...>
-        │   │
-        │   ├── <umbrella>                    # ⟵ cuda/std/<umbrella>   无扩展名公共伞头，全部沿用：
-        │   │                                 #   array atomic chrono cmath complex memory ranges tuple
-        │   │                                 #   type_traits utility variant version …（对应上面的 __<facility>/）
-        │   └── algorithm.<op>.h              # ⟵ cuda/std/algorithm.<op>.h   单算子细分伞头（clamp/copy/find/sort/…）
-        │
-        ├── asc/                              # ⟵ cuda/   命名空间根 asc::（★仅扩展层；std/ 子树已提升为与 asc/ 平级，见上）
         │   ├── __<facility>/  ×通用          # ⟵ cuda/__<facility>/   扩展层「与同名标准设施的 device 增强」，目录名沿用：
         │   │                                 #   __algorithm/ __annotated_ptr/ __argument/ __atomic/ __barrier/ __bit/
         │   │                                 #   __cmath/ __complex/ __container/ __device/ __event/ __execution/
@@ -222,11 +227,7 @@ asc_stl/                                         # 顶层 monorepo（对标 cccl
         │   ├── mte                           # ⟵ cuda/tma    ★改名
         │   └── vector                        # ⟵ cuda/warp   ★改名
         │
-        ├── common/                           # ★新增：std 与 asc 的「共同引用」（最底层叶子，被 std/、asc/ 引用，不反向依赖二者）
-        │   └── __asc/                        # ⟵ cuda/std/__cccl/（★移出 std 子树，下沉至此）  跨整棵树共享的底层配置宏
-        │                                     #   架构/编译器/可见性/方言判定 等；内含头文件全量见 §3
-        │
-        └── ascend/                           # ⟵ nv/   厂商 target 派发（与 std/、asc/、common/ 平级；内容均为头文件，非目录）
+        └── ascend/                           # ⟵ nv/   厂商 target 派发（与 asc/ 平级，对位 nv/；内容均为头文件，非目录）
             ├── target                        # ⟵ nv/target            （文件：派发标签头 __host__/__aicore__、ASC_IF_TARGET 等）
             └── detail/                       # ⟵ nv/detail/   派发设施的内部实现（仅含下列两个头文件）
                 ├── __preprocessor            # ⟵ nv/detail/__preprocessor   （文件：预处理元编程工具宏）
@@ -241,14 +242,13 @@ asc_stl/                                         # 顶层 monorepo（对标 cccl
 |---|---|---|
 | `cccl/` | `asc_stl/` | 顶层 monorepo |
 | `libcudacxx/` | `libasccxx/` | 本库（C++ 标准库，纯头文件） |
-| `include/cuda/` | `include/asc/` | 命名空间根（★仅扩展层；std/ 提升为平级） |
-| `include/cuda/std/` | `include/std/` | `asc::std`，符合 ISO C++（★与 asc/ 平级，不再嵌套） |
-| `include/cuda/std/__cccl/` | `include/common/__asc/` | 跨树底层配置宏（★移出 std 子树，下沉至 common/） |
-| —（cccl 无独立 common） | `include/common/` | ★新增：std 与 asc 的共同引用（最底层叶子，不反向依赖） |
-| `include/cuda/std/detail/__config` | `include/std/detail/__config` | fork 实现配置（std 私有，仅向下依赖 common/） |
-| `include/cuda/std/__<facility>/` ×42 | `include/std/__<facility>/` ×42 | 标准库实现细节，原名保留 |
+| `include/cuda/` | `include/asc/` | 命名空间根（含标准库 std/ 与扩展层，对位 cuda/） |
+| `include/cuda/std/` | `include/asc/std/` | `asc::std`，符合 ISO C++（★仍嵌套在 asc/ 内，不提升、不外置） |
+| `include/cuda/std/__cccl/` | `include/asc/std/__asc/` | 跨树底层配置宏（★仅改名 __cccl→__asc，仍留在 std 子树内） |
+| `include/cuda/std/detail/__config` | `include/asc/std/detail/__config` | fork 实现配置（std 私有，向下依赖 `__asc/`） |
+| `include/cuda/std/__<facility>/` ×42 | `include/asc/std/__<facility>/` ×42 | 标准库实现细节，原名保留 |
 | `include/cuda/__<facility>/` ×36 | `include/asc/__<facility>/` ×36 | 扩展实现（部分改名，见 §3） |
-| `include/nv/` | `include/ascend/` | 厂商 target 派发（目录，与 std/、asc/、common/ 平级） |
+| `include/nv/` | `include/ascend/` | 厂商 target 派发（目录，与 asc/ 平级，对位 nv/） |
 | `include/nv/target` | `include/ascend/target` | host/device 派发标签（**文件**） |
 | `include/nv/detail/__preprocessor` | `include/ascend/detail/__preprocessor` | 预处理工具宏（**文件**） |
 | `include/nv/detail/__target_macros` | `include/ascend/detail/__target_macros` | 目标平台宏（**文件**） |
@@ -265,7 +265,7 @@ asc_stl/                                         # 顶层 monorepo（对标 cccl
 
 | libcudacxx | libasccxx | 原因 |
 |---|---|---|
-| `cuda/std/__cccl/` | `common/__asc/` | 跨树底层配置宏目录（★移出 std 子树，下沉至与 `std/`、`asc/` 平级的 `common/`） |
+| `cuda/std/__cccl/` | `asc/std/__asc/` | 跨树底层配置宏目录（★仅改名 __cccl→__asc，仍留在 `std/` 子树内，对位 `cuda/std/__cccl/`） |
 | `nv/` `nv/target` | `ascend/` `ascend/target` | 厂商派发：`__host__/__device__` → `__host__/__aicore__` |
 | `cuda/__ptx/` · `cuda/ptx` | `asc/__npu_isa/` · `asc/isa` | PTX 是 NV ISA → AI Core 底层指令封装 |
 | `cuda/__tma/` · `cuda/tma` | `asc/__mte/` · `asc/mte` | Tensor Memory Accelerator → Memory Transfer Engine |
@@ -274,7 +274,7 @@ asc_stl/                                         # 顶层 monorepo（对标 cccl
 | `cuda/__driver/` | `asc/__driver/`（语义指向 ACL/驱动） | 驱动层接口，名称保留 |
 | `cuda/__runtime/` | `asc/__runtime/`（语义指向 CANN runtime） | 运行时层，名称保留 |
 
-`common/__asc/`（⟵ `cuda/std/__cccl/`）内配置头同步改名，其余保留：
+`asc/std/__asc/`（⟵ `cuda/std/__cccl/`）内配置头同步改名，其余保留：
 
 | libcudacxx `__cccl/*` | libasccxx `__asc/*` |
 |---|---|
@@ -389,50 +389,45 @@ accl/                                          # ⟵ cccl/        Ascend Core Co
 
 ---
 
-## 5. `std`/`asc`/`common` 三者平级与 `common/` 设计（本次新增）
+## 5. 为什么 1:1 镜像 libcudacxx，而不拆成 `std`/`asc`/`common` 三者平级
 
+> 早期草案曾考虑把 `std/` 从 `asc/` 里提升出来、与 `asc/` 平级，并新增一个 `common/` 顶层目录收纳
+> 跨树共享的底层配置（`__cccl → __asc`）。本节记录**为什么最终放弃这套拆分，改为与 libcudacxx
+> 逐级同构**。
 
-### 5.1 问题：std 子树 ↔ cuda 外层的内外层交叉引用
+### 5.1 cccl 的现状：std 嵌套在 cuda 内，配置在 std 子树里共享
 
-cccl 把 `std/` 嵌套在 `cuda/` 内，二者还共用埋在 `std/` 子树深处的配置 `cuda/std/__cccl/`：
+cccl 把 `std/` 嵌套在 `cuda/` 内，二者共用埋在 `std/` 子树里的配置 `cuda/std/__cccl/`：
 
 ```text
 include/
-└── cuda/                 # 命名空间根 cuda::（扩展层）
+└── cuda/                 # 命名空间根 cuda::（标准库 std/ + 扩展层）
     └── std/              # cuda::std（嵌套）
-        └── __cccl/       # 号称「跨整棵树共享」的底层配置宏
+        └── __cccl/       # 跨整棵树共享的底层配置宏
 ```
 
-矛盾在于：`cuda/std/__cccl/` 名义上**跨整棵树共享**，物理上却在 `std/` 私有深处；而外层 `cuda/` 扩展头又要反向 `#include <cuda/std/__cccl/...>`。于是形成「外层 `cuda/` ↔ 内层 `std/`」的交叉引用——内层私有子目录被外层依赖，层次方向混乱。
+外层 `cuda/` 扩展头会反向 `#include <cuda/std/__cccl/...>`。这是 cccl 约定俗成、且工作良好的工程现状：
+`__cccl/` 在 `std/` 子树内并不会造成实际的构建环。
 
-### 5.2 拆平后的新问题
+### 5.2 拆平方案（std/asc/common 三者平级）为何被放弃
 
-把 `std/` 与 `asc/` 提升为兄弟目录后，共享的 `__cccl/`（→ `__asc/`）失去中性归属：留在 `std/__asc/` 则 `asc/` 要横向伸进 `std/` 私有子树；放进 `asc/` 则 `std/` 反过来依赖 `asc/`。两条路都把交叉引用从「上下层」平移成「左右兄弟」，没根治。
+把 `std/` 提升为与 `asc/` 平级、再新增 `common/` 收纳 `__asc/`，确实能把依赖图整理成严格单向分层
+（`asc/ → std/ → common/`）。但代价是**目标仓不再与 libcudacxx 同构**，弊大于利：
 
-### 5.3 方案：新增同级 `common/`，形成单向分层依赖
+- 头文件路径、`#include` 形态、header guard 全部偏离上游，无法把上游 libcudacxx 整仓直接落到
+  `repos/cccl/libcudacxx/` 当 1:1 源参照，迁移时还要额外维护一层「目录提升 + 外置」的心智映射。
+- 上游一旦在 `cuda/std/__cccl/` 或 `cuda/std/` 下新增/移动文件，拆分布局都要再做一次非平凡的
+  重映射；镜像布局只需「前缀替换 + 厂商词改名」，能自动跟随上游演进。
+- `__cccl/` 在 `std/` 子树内不造成构建环，强行外置为 `common/` 属于「为整洁而整洁」，收益不抵成本。
 
-```text
-依赖方向自上而下（上层 → 下层），不存在向上箭头：
+### 5.3 结论：保持 `asc/std/` 嵌套、`__asc/` 留在 std 子树内
 
-   ┌──────────────────────────────────────────────┐
-   │  asc/        namespace asc::（NPU 扩展）        │
-   └───────────────┬─────────────────────┬─────────┘
-                   │ 引用                │ 引用
-                   ▼                     │
-   ┌───────────────────────────┐         │
-   │  std/   namespace asc::std │         │
-   │         （ISO C++ 标准库） │         │
-   └───────────────┬───────────┘         │
-                   │ 引用                │ 引用
-                   ▼                     ▼
-   ┌──────────────────────────────────────────────┐
-   │  common/    共享底层（配置宏 / 公共基础设施）  │
-   │             不反向依赖 std/ 与 asc/            │
-   └──────────────────────────────────────────────┘
-```
+最终目标布局与 libcudacxx **完全同构**：
 
-- `asc/ → std/`：扩展层在标准设施上做 device 增强，本就依赖 `std/`。
-- `asc/ → common/`、`std/ → common/`：二者都取用 `common/` 的配置与公共基础。
-- `common/` 是叶子层（只被依赖、不回指）⇒ 依赖图无环，原 std↔cuda 内外层互引消失。
+- `std/` 仍嵌套在命名空间根 `asc/` 内（`include/asc/std/`，对位 `include/cuda/std/`）。
+- 跨树配置仍在 `asc/std/__asc/`（对位 `cuda/std/__cccl/`），仅做 `__cccl → __asc` 改名，不外置为 `common/`。
+- 顶层只保留 `asc/`（⟵ `cuda/`）与 `ascend/`（⟵ `nv/`）两个目录。
 
+这与 `config/settings.yaml` 的 `target_repo_prefix`、`reference/symbol_mapping.yaml` 的
+`segment_substitutions: __cccl→__asc` 以及 `repos/accl/` 实际产物**三方一致**：迁移链路只做前缀替换与厂商词改名，最易跟随上游、最易回归。
 

@@ -1,16 +1,22 @@
 #!/bin/bash
-# Host test for comp. (生成自 core/scaffold_scripts.py)
+# Host test for replace_copy_if. (生成自 core/scaffold_scripts.py)
 
 # ---- 统一环境准备（core/scaffold_env.py 生成，host/kernel 共用）----
+for __conda_sh in "$CONDA_SH" "$HOME/miniforge3/etc/profile.d/conda.sh" \
+                  "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh"; do
+    if [ -n "$__conda_sh" ] && [ -f "$__conda_sh" ]; then source "$__conda_sh"; break; fi
+done
 if command -v conda >/dev/null 2>&1; then
-    source activate "${ASC_CONDA_ENV:-accl}" 2>/dev/null \
-        || conda activate "${ASC_CONDA_ENV:-accl}" 2>/dev/null || true
+    source activate "${ASC_CONDA_ENV:-asc-agent}" 2>/dev/null \
+        || conda activate "${ASC_CONDA_ENV:-asc-agent}" 2>/dev/null || true
 fi
 # ASCEND_HOME_PATH 可能由父进程预置，但 PATH/LD_LIBRARY_PATH 仍未完整
 # 初始化；因此这里总是优先 source 官方 set_env.sh（幂等）。
 for __f in "$ASCEND_ENV_SCRIPT" \
+         "$ASCEND_HOME_PATH/set_env.sh" \
          /usr/local/Ascend/ascend-toolkit/set_env.sh \
          /usr/local/Ascend/cann/set_env.sh \
+         /usr/local/Ascend/cann-9.0.0/set_env.sh \
          "$HOME/Ascend/ascend-toolkit/set_env.sh"; do
     if [ -n "$__f" ] && [ -f "$__f" ]; then source "$__f"; break; fi
 done
@@ -21,6 +27,7 @@ done
 for __d in "$ASCEND_HOME_PATH/bin" "$ASCEND_HOME_PATH/tools/ccec_compiler/bin" \
          /usr/local/Ascend/cann/bin \
          /usr/local/Ascend/cann/x86_64-linux/bin \
+         /usr/local/Ascend/cann/python/site-packages/bin \
          /usr/local/Ascend/cann/x86_64-linux/ccec_compiler/bin; do
     [ -d "$__d" ] && case ":$PATH:" in *":$__d:"*) ;; *) export PATH="$__d:$PATH";; esac
 done
@@ -31,6 +38,9 @@ for __d in "$ASCEND_HOME_PATH/lib64" "$ASCEND_HOME_PATH/devlib" \
          /usr/local/Ascend/driver/lib64 /usr/local/Ascend/driver/lib64/common \
          /usr/local/Ascend/driver/lib64/driver; do
     [ -d "$__d" ] && case ":$LD_LIBRARY_PATH:" in *":$__d:"*) ;; *) export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$__d";; esac
+done
+for __d in "$ASCEND_HOME_PATH/python/site-packages" /usr/local/Ascend/cann/python/site-packages; do
+    [ -d "$__d" ] && case ":$PYTHONPATH:" in *":$__d:"*) ;; *) export PYTHONPATH="$__d${PYTHONPATH:+:$PYTHONPATH}";; esac
 done
 # ---- 环境准备结束 ----
 
@@ -44,5 +54,5 @@ fi
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-make comp_host_test
-ctest -R "host\.comp$" -V
+make replace_copy_if_host_test
+ctest -R "host\.replace_copy_if$" -V

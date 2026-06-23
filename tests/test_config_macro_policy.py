@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 ASC_INCLUDE = (
     Path(__file__).resolve().parents[1]
     / "repos/accl/asc-stl/include"

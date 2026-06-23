@@ -6,14 +6,14 @@ import json
 
 import pytest
 
-from core.dep_graph import scan_dependency_graph
-from core.inventory import scan_header_inventory
-from core.migration_status import (
+from core.analysis.dep_graph import scan_dependency_graph
+from core.analysis.inventory import scan_header_inventory
+from core.analysis.migration_status import (
     build_migration_status_report,
     parse_migration_ledger_statuses,
     write_migration_status_report,
 )
-from core.test_index import scan_test_index
+from core.analysis.test_index import scan_test_index
 
 
 def _seed_cccl(tmp_path):
@@ -105,7 +105,10 @@ def _seed_target(tmp_path):
     (include_root / "__utility").mkdir(parents=True)
     (include_root / "__config").write_text("// manual config\n", encoding="utf-8")
     (include_root / "__algorithm" / "max.h").write_text("// max\n", encoding="utf-8")
-    (include_root / "__algorithm" / "needs_pair.h").write_text("// needs pair\n", encoding="utf-8")
+    (include_root / "__algorithm" / "needs_pair.h").write_text(
+        '#include "asc/std/__utility/missing_pair_dep.h"\n',
+        encoding="utf-8",
+    )
     (include_root / "__utility" / "move.h").write_text("// move\n", encoding="utf-8")
     (include_root / "__algorithm" / "synthetic.h").write_text("// synthetic\n", encoding="utf-8")
     (include_root / "__algorithm" / "swap.h").write_text("// wrapper\n", encoding="utf-8")
@@ -178,6 +181,8 @@ def test_build_migration_status_report_from_fixture(tmp_path):
     needs_pair = by_header["__algorithm/needs_pair.h"]
     assert needs_pair.status == "generated"
     assert needs_pair.missing_dependencies == ["__utility/pair.h"]
+    assert needs_pair.target_include_missing_dependencies == ["__utility/missing_pair_dep.h"]
+    assert "target_header_has_missing_includes" in needs_pair.notes
     by_missing = {(entry.header, entry.dependency): entry for entry in report.missing_dependencies}
     assert by_missing[("__algorithm/needs_pair.h", "__utility/pair.h")].dependency_target_relpath == (
         "asc-stl/include/asc/std/__utility/pair.h"
@@ -201,6 +206,8 @@ def test_build_migration_status_report_from_fixture(tmp_path):
     assert by_header["algorithm"].status == "host_passed"
     assert report.summary()["migrated_header_count"] == 4
     assert report.summary()["missing_dependency_count"] == 5
+    assert report.summary()["target_broken_header_count"] == 1
+    assert report.summary()["target_missing_include_count"] == 1
     assert report.summary()["missing_dependency_classification_counts"] == {
         "bootstrap_manual": 1,
         "deferred_upstream_support_only": 1,

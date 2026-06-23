@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 ACCL_INCLUDE = (
     Path(__file__).resolve().parents[1]
     / "repos/accl/asc-stl/include"
@@ -13,9 +12,21 @@ ACCL_INCLUDE = (
 
 # 该用例依赖「基础依赖层已迁移进目标仓」这一数据前提；未迁移时应**跳过**（像缺 cannsim 跳过
 # kernel 那样），而不是把全套件/ CI 标红。这条门禁本身不会迁移任何头，只校验已有产物自洽。
-_FOUNDATIONAL_HEADERS_PRESENT = (
-    ACCL_INCLUDE / "asc/std/__type_traits/integral_constant.h"
-).is_file()
+_FOUNDATIONAL_HEADERS = (
+    "asc/std/__type_traits/integral_constant.h",
+    "asc/std/__type_traits/remove_reference.h",
+    "asc/std/__type_traits/is_reference.h",
+    "asc/std/__type_traits/is_same.h",
+    "asc/std/__type_traits/conditional.h",
+    "asc/std/__utility/move.h",
+    "asc/std/__utility/forward.h",
+    "asc/std/__utility/pair.h",
+    "asc/std/__functional/identity.h",
+    "asc/std/__functional/operations.h",
+    "asc/std/__algorithm/comp.h",
+    "asc/std/__algorithm/minmax.h",
+)
+_FOUNDATIONAL_HEADERS_PRESENT = all((ACCL_INCLUDE / header).is_file() for header in _FOUNDATIONAL_HEADERS)
 
 
 @pytest.mark.skipif(

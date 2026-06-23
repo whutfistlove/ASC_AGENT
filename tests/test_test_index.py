@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from core.test_index import (
+from core.analysis.test_index import (
     classify_test_kind,
     is_helper_header,
     scan_test_index,

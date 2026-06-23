@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>((i * 7 + 3) % 13) - 6.0f; h_in1[i] = static_cast<float>((i * 11 + 1) % 13) - 6.0f; h_in2[i] = static_cast<float>((i * 17 + 5) % 13) - 6.0f;",
+  "element_op_code": "out0_val = asc::std::median3(in0_val, in1_val, in2_val);",
+  "golden_code": "float lo = in0_ref < in1_ref ? (in0_ref < in2_ref ? in0_ref : in2_ref) : (in1_ref < in2_ref ? in1_ref : in2_ref);\nfloat hi = in0_ref > in1_ref ? (in0_ref > in2_ref ? in0_ref : in2_ref) : (in1_ref > in2_ref ? in1_ref : in2_ref);\nexpected0 = in0_ref + in1_ref + in2_ref - lo - hi;",
+  "gm_inputs": 3,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

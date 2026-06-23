@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>(i % 100);",
+  "element_op_code": "float buf[1] = {in0_val}; asc::std::generate(buf, buf + 1, +[]() -> float { return 42.0f; }); out0_val = buf[0];",
+  "golden_code": "expected0 = 42.0f;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

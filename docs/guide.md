@@ -29,9 +29,9 @@ cannsim -s Ascend950
 ```
 
 如果本机 CANN 支持的 SOC 名称不同，需要调整
-`core/operator_kernel_scaffold.py` 中的 `KERNEL_SOC_VERSION`。
+`core/testing/operator_kernel_scaffold.py` 中的 `KERNEL_SOC_VERSION`。
 
-运行测试前，ASC_agent 会做若干**环境自愈**（`core/build_env.py`），无需手工干预：
+运行测试前，ASC_agent 会做若干**环境自愈**（`core/testing/build_env.py`），无需手工干预：
 
 - `cannsim` / `llvm-objdump` 常只在 `source set_env` 后才上 PATH；运行器会在 CANN 安装目录
   探测它们并补进子进程 PATH，避免“装了却找不到”；
@@ -81,7 +81,7 @@ python3 main.py convert --input <header> --with-tests --kernel-fast --show-model
 
 ## 3. 头文件迁移流程
 
-头文件迁移由 `core/pipeline.py` 组织，核心数据流如下：
+头文件迁移由 `core/migration/pipeline.py` 组织，核心数据流如下：
 
 ```text
 CCCL header
@@ -102,7 +102,7 @@ examples/headers/os.cccl.h
 examples/headers/os.accl.h
 ```
 
-路径映射和 header guard 推导主要由 `core/path_mapper.py` 负责。典型映射是：
+路径映射和 header guard 推导主要由 `core/analysis/path_mapper.py` 负责。典型映射是：
 
 ```text
 repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
@@ -111,7 +111,7 @@ repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
 
 ## 4. 测试迁移流程
 
-测试迁移由 `core/test_migrator.py` 负责。它读取：
+测试迁移由 `core/testing/test_migrator.py` 负责。它读取：
 
 - CCCL 头文件；
 - 已生成的 ACCL 头文件；
@@ -134,7 +134,8 @@ repos/cccl/libcudacxx/include/cuda/std/__algorithm/min.h
 }
 ```
 
-如果测试迁移不可用，ASC_agent 会退回到旧的 smoke-test 模板，以保证离线和 mock 流程仍然可用。
+如果测试迁移不可用，ASC_agent 会先尝试少数已知形状算子的内置语义 fallback（例如
+`generate` / `for_each`）；未知形状只生成 include-only smoke，不猜测 `op(x, y)` 调用。
 
 ## 5. Host 测试
 
@@ -171,12 +172,12 @@ repos/accl/asc-stl/test/asc-stl/asc/kernel/<algo>_example/
 
 职责划分（拆分后的脚手架，单一事实源）：
 
-- `core/operator_kernel_scaffold.py`：AscendC/ACL 的 **C++ 源 + CMake** 生成；
-- `core/scaffold_scripts.py`：**shell 运行脚本**生成（kernel `run_test.sh`、host
+- `core/testing/operator_kernel_scaffold.py`：AscendC/ACL 的 **C++ 源 + CMake** 生成；
+- `core/testing/scaffold_scripts.py`：**shell 运行脚本**生成（kernel `run_test.sh`、host
   `run_host_test.sh`、full_project `run_kernel_full.sh`）；
-- `core/scaffold_env.py`：三类脚本**共用的统一环境准备片段**；
-- `core/build_env.py`：构建环境探测与自愈（过期缓存、CANN 工具 PATH）；
-- `core/operator_test.py`：文件准备、命令执行、日志保存、超时处理、失败分类和通过/失败判定。
+- `core/testing/scaffold_env.py`：三类脚本**共用的统一环境准备片段**；
+- `core/testing/build_env.py`：构建环境探测与自愈（过期缓存、CANN 工具 PATH）；
+- `core/testing/operator_test.py`：文件准备、命令执行、日志保存、超时处理、失败分类和通过/失败判定。
 
 host 侧不再依赖签入的 `000_set_env.sh` / `001_setup_build.sh`，而是运行生成的
 `run_host_test.sh`（同样源自 `scaffold_scripts` + `scaffold_env`）。旧的 `000`–`004`
@@ -281,9 +282,10 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
   只有当其中**不含 `Mismatch at`** 且**命中独立 golden 的 `kernel simulation verification passed.`**
   时，才输出 `KERNEL_SIM_RESULT: PASS`；
 - 数值 mismatch / 找不到 cannsim.log → 直接判失败（非零退出）；
-- 没有 `kernel_spec` 的回退档只做 build+launch 冒烟，输出 `KERNEL_SIM_RESULT: SMOKE`
-  （**不计为语义通过**），避免“拿算子和自己比”的自洽假绿；
-- 包装层（`operator_test.py`）再校验：返回码为 0、命中 `KERNEL_SIM_RESULT: PASS`、
+- 没有模型 `kernel_spec` 时，已知形状算子可使用内置语义 `kernel_spec`；未知形状回退为
+  include/build/launch 冒烟，输出 `KERNEL_SIM_RESULT: SMOKE`（**不计为语义通过**），避免“拿算子和自己比”
+  或盲目调用 `op(x, y)` 的自洽假绿/误失败；
+- 包装层（`core/testing/operator_test.py`）再校验：返回码为 0、命中 `KERNEL_SIM_RESULT: PASS`、
   且日志不含已知失败特征（CMake 错误、mismatch、ACL 错误、CRLF 污染、command-not-found 等）。
 
 ## 9. 测试反馈修复闭环
@@ -322,7 +324,7 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 
 ## 10. 失败分类（环境 vs 代码）
 
-`core/failure_triage.py` 在每次失败后给出分类，避免把“改代码无用”的环境问题反复回传模型：
+`core/testing/failure_triage.py` 在每次失败后给出分类，避免把“改代码无用”的环境问题反复回传模型：
 
 - **env**：构建/工具链/驱动问题——过期 CMakeCache、缺 `llvm-objdump`、缺 `cannsim`、
   驱动符号 `undefined reference to drv*` 等。此类**不进**模型修复循环，直接报“需修环境”。
@@ -330,14 +332,14 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 - **unknown**：信息不足。
 
 判定时**代码特征优先于环境特征**（真正的编译/数值错总值得回传模型；纯环境失败通常不含这些行）。
-能自愈的环境问题（过期缓存、CANN 工具 PATH）由 `core/build_env.py` 在执行前主动修复；缺 `cannsim`
+能自愈的环境问题（过期缓存、CANN 工具 PATH）由 `core/testing/build_env.py` 在执行前主动修复；缺 `cannsim`
 则把 kernel 标为 SKIPPED（不计失败）。
 
 ## 11. 模型工具（取证 + 自检，默认开启，覆盖生成+修复全链路）
 
 `config/settings.yaml` 里 `model.tools_enabled` 现默认 `true`（配 `max_tool_rounds`）。工具不再
-只接在修复路径，而是由统一工厂 `core/agent_tools.build_toolbox` 注入到三处：头文件初稿生成、
-测试迁移、测试反馈修复——让模型在产出结果前就能取证/自检（`core/agent_tools.py`，沙箱限制在
+只接在修复路径，而是由统一工厂 `core/llm/agent_tools.build_toolbox` 注入到三处：头文件初稿生成、
+测试迁移、测试反馈修复——让模型在产出结果前就能取证/自检（`core/llm/agent_tools.py`，沙箱限制在
 目标仓 / outputs；provider 为 `mock` 时返回 `None` 以保持离线行为）：
 
 | 工具 | 作用 |
@@ -348,7 +350,7 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 | `extract_error_lines` | 从数万行日志里只抽 error/warning 行回喂 |
 
 工具调用循环在 `model_client.generate_with_tools`（OpenAI 兼容 `tools`，GLM 支持）。生成路径
-（初稿 / 测试迁移）以 `core/utils.call_model_maybe_tools` 复用同一循环：有工具箱走带工具对话，
+（初稿 / 测试迁移）以 `core/common/utils.call_model_maybe_tools` 复用同一循环：有工具箱走带工具对话，
 否则回退单轮 `generate`。
 
 ## 12. 扩展思考
@@ -368,7 +370,7 @@ kernel 通过标准比“命令返回码为 0”更严格，且**以被测程序
 
 ## 14. 示例库扩充（make-example，curation）
 
-few-shot 检索（第 4 节 / `core/example_retrieval.py`）只有在示例库够大够普遍时才挑得动。示例是
+few-shot 检索（第 4 节 / `core/knowledge/example_retrieval.py`）只有在示例库够大够普遍时才挑得动。示例是
 金标准，因此不手写，而是用 `make-example` 把 `repos/accl` 里**已迁移并通过测试**的算子晋升为示例：
 
 ```bash
@@ -377,7 +379,7 @@ python3 main.py make-example clamp sort3 minmax  # 晋升指定算子
 python3 main.py make-example --all --overwrite   # 全量刷新
 ```
 
-实现见 `core/example_promote.py`，把该算子的 CCCL 源头 / ACCL 头 / CCCL 测试 / ACCL host 测试 /
+实现见 `core/migration/example_promote.py`，把该算子的 CCCL 源头 / ACCL 头 / CCCL 测试 / ACCL host 测试 /
 kernel_spec 复制进 `examples/`。要点：
 
 - 这是**人触发的 curation**（把已验证的*输出*沉淀为可复用的*输入*），不破坏运行时 I/O 边界：

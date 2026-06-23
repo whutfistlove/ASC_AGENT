@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>(i % 10);",
+  "element_op_code": "out0_val = (in0_val == 5.0f) ? 99.0f : in0_val;",
+  "golden_code": "expected0 = (in0_ref == 5.0f) ? 99.0f : in0_ref;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

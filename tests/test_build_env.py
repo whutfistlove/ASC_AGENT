@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from core import build_env
+from core.testing import build_env
 
 
 def test_cann_bin_candidates_are_paths():

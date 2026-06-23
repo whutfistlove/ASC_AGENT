@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<int32_t>((i * 7 + 3) % 19) - 9; h_in1[i] = static_cast<int32_t>((i * 11 + 5) % 23) - 11;",
+  "element_op_code": "int32_t arr[4] = {in0_val, in0_val + 1, in1_val, in1_val + 1};\nauto it = asc::std::find_if_not(arr, arr + 4, [](int32_t v) { return v % 2 == 0; });\nout0_val = (it != arr + 4) ? *it : static_cast<int32_t>(-1);",
+  "golden_code": "int32_t arr[4] = {in0_ref, in0_ref + 1, in1_ref, in1_ref + 1};\nint32_t* it = arr;\nfor (; it != arr + 4; ++it) { if (!(*it % 2 == 0)) break; }\nexpected0 = (it != arr + 4) ? *it : static_cast<int32_t>(-1);",
+  "gm_inputs": 2,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

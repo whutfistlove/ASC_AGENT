@@ -1,0 +1,161 @@
+schema_version: 1
+headers:
+  - id: __algorithm.clamp
+    name: clamp
+    module: __algorithm
+    source_header: __algorithm/clamp.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/clamp.h
+    cccl: headers/clamp.cccl.h
+    accl: headers/clamp.accl.h
+    shape: value
+    tags: [algorithm, compare, bounds]
+    description: ternary value algorithm with comparator overloads
+    validation_status: curated
+  - id: __algorithm.max
+    name: max
+    module: __algorithm
+    source_header: __algorithm/max.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/max.h
+    cccl: headers/max.cccl.h
+    accl: headers/max.accl.h
+    shape: value
+    tags: [algorithm, compare, binary]
+    description: binary value algorithm with comparator overloads
+    validation_status: curated
+  - id: __algorithm.min
+    name: min
+    module: __algorithm
+    source_header: __algorithm/min.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/min.h
+    cccl: headers/min.cccl.h
+    accl: headers/min.accl.h
+    shape: value
+    tags: [algorithm, compare, binary]
+    description: binary value algorithm with comparator overloads
+    validation_status: curated
+  - id: __algorithm.minmax
+    name: minmax
+    module: __algorithm
+    source_header: __algorithm/minmax.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/minmax.h
+    cccl: headers/minmax.cccl.h
+    accl: headers/minmax.accl.h
+    shape: multi_return
+    tags: [algorithm, compare, pair]
+    description: value algorithm returning a pair of min and max references
+    validation_status: curated
+  - id: __asc.os
+    name: os
+    module: __asc
+    source_header: __cccl/os.h
+    target_relpath: asc-stl/include/asc/std/__asc/os.h
+    cccl: headers/os.cccl.h
+    accl: headers/os.accl.h
+    shape: macro_config
+    tags: [config, macro, platform]
+    description: platform macro configuration header
+    validation_status: curated
+  - id: __algorithm.quad_fanout
+    name: quad_fanout
+    module: __algorithm
+    source_header: __algorithm/quad_fanout.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/quad_fanout.h
+    cccl: headers/quad_fanout.cccl.h
+    accl: headers/quad_fanout.accl.h
+    shape: inplace_void
+    tags: [algorithm, synthetic, multi_output]
+    description: synthetic void fan-out operator with multiple inputs and outputs
+    validation_status: curated
+  - id: __algorithm.sort3
+    name: sort3
+    module: __algorithm
+    source_header: __algorithm/sort3.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/sort3.h
+    cccl: headers/sort3.cccl.h
+    accl: headers/sort3.accl.h
+    shape: inplace_void
+    tags: [algorithm, synthetic, ordering]
+    description: synthetic fixed-size sorting network with output references
+    validation_status: curated
+  - id: __utility.swap
+    name: swap
+    module: __utility
+    source_header: __utility/swap.h
+    target_relpath: asc-stl/include/asc/std/__utility/swap.h
+    cccl: headers/swap.cccl.h
+    accl: headers/swap.accl.h
+    shape: inplace_void
+    tags: [utility, inplace, references]
+    description: in-place value and array swap overloads
+    validation_status: curated
+tests:
+  - id: __algorithm.clamp
+    name: clamp
+    module: __algorithm
+    source_header: __algorithm/clamp.h
+    cccl_test: tests/clamp.cccl.pass.cpp
+    accl_host: tests/clamp.accl_host.cpp
+    accl_kernel_spec: tests/clamp.accl_kernel_spec.json
+    shape: value
+    tags: [algorithm, compare, bounds]
+    validation_status: curated
+  - id: __algorithm.max
+    name: max
+    module: __algorithm
+    source_header: __algorithm/max.h
+    cccl_test: tests/max.cccl.pass.cpp
+    accl_host: tests/max.accl_host.cpp
+    accl_kernel_spec: tests/max.accl_kernel_spec.json
+    shape: value
+    tags: [algorithm, compare, binary]
+    validation_status: curated
+  - id: __algorithm.min
+    name: min
+    module: __algorithm
+    source_header: __algorithm/min.h
+    cccl_test: tests/min.cccl.pass.cpp
+    accl_host: tests/min.accl_host.cpp
+    accl_kernel_spec: tests/min.accl_kernel_spec.json
+    shape: value
+    tags: [algorithm, compare, binary]
+    validation_status: curated
+  - id: __algorithm.minmax
+    name: minmax
+    module: __algorithm
+    source_header: __algorithm/minmax.h
+    cccl_test: tests/minmax.cccl.pass.cpp
+    accl_host: tests/minmax.accl_host.cpp
+    accl_kernel_spec: tests/minmax.accl_kernel_spec.json
+    shape: multi_return
+    tags: [algorithm, compare, pair]
+    validation_status: curated
+  - id: __algorithm.quad_fanout
+    name: quad_fanout
+    module: __algorithm
+    source_header: __algorithm/quad_fanout.h
+    cccl_test: tests/quad_fanout.cccl.pass.cpp
+    accl_host: tests/quad_fanout.accl_host.cpp
+    accl_kernel_spec: tests/quad_fanout.accl_kernel_spec.json
+    shape: inplace_void
+    tags: [algorithm, synthetic, multi_output]
+    validation_status: curated
+  - id: __algorithm.sort3
+    name: sort3
+    module: __algorithm
+    source_header: __algorithm/sort3.h
+    cccl_test: tests/sort3.cccl.pass.cpp
+    accl_host: tests/sort3.accl_host.cpp
+    accl_kernel_spec: tests/sort3.accl_kernel_spec.json
+    shape: inplace_void
+    tags: [algorithm, synthetic, ordering]
+    validation_status: curated
+  - id: __utility.swap
+    name: swap
+    module: __utility
+    source_header: __utility/swap.h
+    cccl_test: tests/swap.cccl.pass.cpp
+    accl_host: tests/swap.accl_host.cpp
+    accl_kernel_spec: tests/swap.accl_kernel_spec.json
+    shape: inplace_void
+    tags: [utility, inplace, references]
+    validation_status: curated

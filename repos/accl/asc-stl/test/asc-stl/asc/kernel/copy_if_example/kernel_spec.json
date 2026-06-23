@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = i;",
+  "element_op_code": "int a = in0_val; int b = 0; asc::std::copy_if(&a, &a + 1, &b, [](int v){ return v % 3 == 0; }); out0_val = b;",
+  "golden_code": "expected0 = (in0_ref % 3 == 0) ? in0_ref : 0;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

@@ -8,10 +8,12 @@ import argparse
 import json
 from pathlib import Path
 
-import main
-from core.config import Config
-from core.model_client import MockModelClient
-from core.pipeline import RunResult
+# 命令实现已迁到 cli.commands；测试针对该模块打桩/调用，使补丁命中真实查找命名空间。
+from cli import commands as main
+from core.analysis.migration_state import MigrationStateStore
+from core.common.config import Config
+from core.llm.model_client import MockModelClient
+from core.migration.pipeline import RunResult
 
 TARGET_REL = "asc-stl/include/asc/std/__algorithm/min.h"
 
@@ -148,6 +150,85 @@ def test_maybe_migrate_tests_uses_real_index_with_mock_model(tmp_path):
     assert plan["selected_tests"][0]["relative_path"] == "algorithms/max.pass.cpp"
     assert plan["deferred_tests"][0]["reason"] == "verify-deferred"
     assert "selected_max" in model.calls[0]["user_content"]
+
+
+def test_record_migration_state_ignores_smoke_only_pass(tmp_path):
+    cfg = _make_config(tmp_path)
+    src = tmp_path / "cccl" / "libcudacxx" / "include" / "cuda" / "std" / "__algorithm" / "foo.h"
+    src.parent.mkdir(parents=True)
+    src.write_text("// foo\n", encoding="utf-8")
+
+    main._record_migration_state(
+        cfg,
+        input_path=src,
+        target_relpath="asc-stl/include/asc/std/__algorithm/foo.h",
+        test_result={
+            "host_passed": False,
+            "host_semantic_passed": False,
+            "host_smoke_passed": True,
+            "semantic_passed": False,
+            "smoke_passed": True,
+        },
+        run_host=True,
+        run_kernel=False,
+        args=_args(mock=False, test_dry_run=False, prepare_tests_only=False),
+    )
+
+    store = MigrationStateStore.load(cfg.output_dir / "migration_state.json")
+    assert "__algorithm/foo.h" not in store.headers
+
+
+def test_cmd_test_migrates_tests_without_feedback_fix_flag(monkeypatch):
+    built_clients = []
+    seen = {}
+
+    def fake_build_model_client(config):
+        client = object()
+        built_clients.append(client)
+        return client
+
+    def fake_maybe_migrate_tests(args, config, model_client, **kwargs):
+        seen["model_client"] = model_client
+        seen["input_path"] = kwargs.get("input_path")
+        return {"host_test_code": "int main(){return 0;}", "kernel_spec": {}}
+
+    monkeypatch.setattr(main, "build_model_client", fake_build_model_client)
+    monkeypatch.setattr(main, "_maybe_migrate_tests", fake_maybe_migrate_tests)
+    monkeypatch.setattr(
+        main,
+        "_run_operator_tests",
+        lambda *a, **k: {
+            "host_semantic_passed": True,
+            "kernel_semantic_passed": True,
+            "host_passed": True,
+            "kernel_passed": True,
+            "error": "",
+            "skipped": False,
+        },
+    )
+
+    code = main.cmd_test(argparse.Namespace(
+        settings=None,
+        target_relpath=TARGET_REL,
+        input="some/header.h",
+        test_feedback_to_model=False,
+        mock=False,
+        test_dry_run=False,
+        quiet=True,
+        prepare_tests_only=False,
+        overwrite_tests=False,
+        host_only=False,
+        kernel_only=False,
+        kernel_mode="run_test",
+        kernel_timeout=0,
+        kernel_fast=False,
+        kernel_print_samples=None,
+    ))
+
+    assert code == 0
+    assert len(built_clients) == 1
+    assert seen["model_client"] is built_clients[0]
+    assert seen["input_path"] == "some/header.h"
 
 
 def test_loop_fixes_then_passes(tmp_path, monkeypatch):

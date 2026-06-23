@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from core.best_of_n import best_of_n, score_header_code, score_host_test_code
-from core.config import Config
-from core.model_client import MockModelClient
-from core.pipeline import Pipeline
+from core.common.config import Config
+from core.llm.best_of_n import best_of_n, score_header_code, score_host_test_code
+from core.llm.model_client import MockModelClient
+from core.migration.pipeline import Pipeline
 
 
 # --------------------------------------------------------------------------- #

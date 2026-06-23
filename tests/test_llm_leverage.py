@@ -13,12 +13,12 @@ import json
 from pathlib import Path
 
 import main
-from core.agent_tools import AgentToolbox, build_toolbox, distill_error_lines
-from core.config import Config
-from core.fix_once import run_test_artifact_fix
-from core.model_client import MockModelClient
-from core.pipeline import Pipeline
-from core.test_migrator import migrate_operator_tests
+from core.common.config import Config
+from core.llm.agent_tools import AgentToolbox, build_toolbox, distill_error_lines
+from core.llm.model_client import MockModelClient
+from core.migration.fix_once import run_test_artifact_fix
+from core.migration.pipeline import Pipeline
+from core.testing.test_migrator import migrate_operator_tests
 
 
 # --------------------------------------------------------------------------- #

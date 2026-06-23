@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from core.example_retrieval import (
+from core.knowledge.example_retrieval import (
     discover_header_pairs,
     discover_test_triples,
     select_header_examples,
@@ -63,6 +63,58 @@ def test_select_header_by_token_overlap_when_no_name_match(tmp_path):
         source_text="in place swap two references void", k=1,
     )
     assert Path(out[0][0]).name == "swap.cccl.h"
+
+
+def test_manifest_metadata_breaks_bare_filename_collision(tmp_path):
+    root = tmp_path / "examples"
+    headers = root / "headers"
+    (headers / "algorithm").mkdir(parents=True)
+    (headers / "numeric").mkdir(parents=True)
+    for module, text in {
+        "algorithm": "compare return greater value",
+        "numeric": "number theory gcd divisor remainder",
+    }.items():
+        (headers / module / "max.cccl.h").write_text(text, encoding="utf-8")
+        (headers / module / "max.accl.h").write_text(f"// {module} max", encoding="utf-8")
+    (root / "manifest.yaml").write_text(
+        """
+schema_version: 1
+headers:
+  - id: __algorithm.max
+    name: max
+    module: __algorithm
+    source_header: __algorithm/max.h
+    target_relpath: asc-stl/include/asc/std/__algorithm/max.h
+    cccl: headers/algorithm/max.cccl.h
+    accl: headers/algorithm/max.accl.h
+    shape: value
+    tags: [algorithm, compare]
+  - id: __numeric.max
+    name: max
+    module: __numeric
+    source_header: __numeric/max.h
+    target_relpath: asc-stl/include/asc/std/__numeric/max.h
+    cccl: headers/numeric/max.cccl.h
+    accl: headers/numeric/max.accl.h
+    shape: value
+    tags: [numeric, gcd, divisor]
+""",
+        encoding="utf-8",
+    )
+    cfg = _Cfg(
+        {"e1": {"cccl": str(headers / "algorithm" / "max.cccl.h"),
+                "accl": str(headers / "algorithm" / "max.accl.h")}},
+        {},
+    )
+
+    out = select_header_examples(
+        cfg,
+        target_relpath="asc-stl/include/asc/std/__numeric/max.h",
+        source_text="numeric divisor remainder gcd",
+        k=1,
+    )
+
+    assert Path(out[0][0]).parent.name == "numeric"
 
 
 def test_select_header_disabled_keeps_configured_order(tmp_path):
@@ -129,3 +181,53 @@ def test_select_test_examples_ranks_by_algo_name(tmp_path):
     )
     out = select_test_examples(cfg, algo_name="swap", cccl_test_text="x", k=2)
     assert out[0]["name"] == "swap"
+
+
+def test_manifest_test_metadata_participates_in_ranking(tmp_path):
+    root = tmp_path / "examples"
+    tests = root / "tests"
+    (tests / "algorithm").mkdir(parents=True)
+    (tests / "utility").mkdir(parents=True)
+    for module, text in {
+        "algorithm": "// compare max test",
+        "utility": "// in place reference swap test",
+    }.items():
+        (tests / module / "case.cccl.pass.cpp").write_text(text, encoding="utf-8")
+        (tests / module / "case.accl_host.cpp").write_text("// host", encoding="utf-8")
+        (tests / module / "case.accl_kernel_spec.json").write_text("{}", encoding="utf-8")
+    (root / "manifest.yaml").write_text(
+        """
+schema_version: 1
+tests:
+  - id: __algorithm.case
+    name: case
+    module: __algorithm
+    cccl_test: tests/algorithm/case.cccl.pass.cpp
+    accl_host: tests/algorithm/case.accl_host.cpp
+    accl_kernel_spec: tests/algorithm/case.accl_kernel_spec.json
+    tags: [algorithm, compare]
+  - id: __utility.case
+    name: case
+    module: __utility
+    cccl_test: tests/utility/case.cccl.pass.cpp
+    accl_host: tests/utility/case.accl_host.cpp
+    accl_kernel_spec: tests/utility/case.accl_kernel_spec.json
+    tags: [utility, inplace, reference]
+""",
+        encoding="utf-8",
+    )
+    cfg = _Cfg(
+        {},
+        {"e1": {"cccl_test": str(tests / "algorithm" / "case.cccl.pass.cpp"),
+                "accl_host": str(tests / "algorithm" / "case.accl_host.cpp"),
+                "accl_kernel_spec": str(tests / "algorithm" / "case.accl_kernel_spec.json")}},
+    )
+
+    out = select_test_examples(
+        cfg,
+        algo_name="case",
+        cccl_test_text="reference inplace swap",
+        k=1,
+    )
+
+    assert Path(out[0]["cccl_test"]).parent.name == "utility"

@@ -1,8 +1,0 @@
-{
-  "input_init": "h_in0[i] = static_cast<int32_t>(i % 11) - 5; h_in1[i] = static_cast<int32_t>((i * 7 + 3) % 11) - 5;",
-  "element_op_code": "out0_val = asc::std::__less()(in0_val, in1_val) ? 1 : 0;",
-  "golden_code": "expected0 = (in0_ref < in1_ref) ? 1 : 0;",
-  "gm_inputs": 2,
-  "gm_outputs": 1,
-  "dtype": "int32_t"
-}

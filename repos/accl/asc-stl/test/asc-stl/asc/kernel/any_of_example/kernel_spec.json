@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = (i % 2 == 0) ? static_cast<float>(i + 1) : -static_cast<float>(i + 1);",
+  "element_op_code": "float val = in0_val;\nfloat arr[1] = {val};\nauto pred = [](const float& v) { return v > 0.0f; };\nbool res = asc::std::any_of(arr, arr + 1, pred);\nout0_val = res ? 1.0f : 0.0f;",
+  "golden_code": "float val_ref = in0_ref;\nbool expected_res = val_ref > 0.0f;\nexpected0 = expected_res ? 1.0f : 0.0f;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

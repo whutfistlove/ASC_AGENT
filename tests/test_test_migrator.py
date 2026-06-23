@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 import main
-from core.config import Config
-from core.model_client import MockModelClient
-from core.test_index import scan_test_index
-from core.test_migrator import (
+from core.analysis.test_index import scan_test_index
+from core.common.config import Config
+from core.llm.model_client import MockModelClient
+from core.testing.test_migrator import (
     default_test_plan_filename,
     migrate_operator_tests,
     plan_upstream_tests_for_header,

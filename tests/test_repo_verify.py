@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from core.config import Config
-from core.repo_verify import (
+from core.common.config import Config
+from core.repo.repo_verify import (
     RepoVerifier,
     build_branch_name,
     build_commit_message,

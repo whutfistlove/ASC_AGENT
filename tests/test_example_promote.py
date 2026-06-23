@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
-from core.config import Config
-from core.example_promote import discover_promotable, promote_operator, resolve_artifacts
+from core.common.config import Config
+from core.migration.example_promote import discover_promotable, promote_operator, resolve_artifacts
 
 _VALID_HOST = (
     '#include "asc/std/__algorithm/foo.h"\n'
@@ -80,6 +81,10 @@ def test_promote_writes_header_and_test(tmp_path):
     # kernel_spec 经 validate 规整后落盘（gm_outputs 补全为 1）。
     spec = json.loads((td / "foo.accl_kernel_spec.json").read_text(encoding="utf-8"))
     assert spec["gm_inputs"] == 1 and spec["gm_outputs"] == 1
+    manifest = yaml.safe_load((tmp_path / "examples" / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["headers"][0]["id"] == "__algorithm.foo"
+    assert manifest["headers"][0]["target_relpath"] == "asc-stl/include/asc/std/__algorithm/foo.h"
+    assert manifest["tests"][0]["id"] == "__algorithm.foo"
 
 
 def test_promote_skips_existing_without_overwrite(tmp_path):

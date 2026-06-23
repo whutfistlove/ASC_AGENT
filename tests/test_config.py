@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from core import config as cfgmod
-from core.config import Config, _deep_merge, _expand_str, detect_conda_sh
+from core.common import config as cfgmod
+from core.common.config import Config, _deep_merge, _expand_str, detect_conda_sh
 
 
 def test_expand_simple(monkeypatch):
@@ -111,3 +111,72 @@ def test_build_shell_script_without_conda(tmp_path):
     # 自动探测在本测试环境通常找不到 -> 空 -> 不应出现 conda activate
     script = cfg.build_shell_script("echo hi", cd_repo=False)
     assert "conda activate" not in script or cfg.repo_verify["conda_sh"]
+
+
+def test_reference_policy_matches_runtime_config():
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config.load(root / "config" / "settings.yaml", project_root=root)
+    assert cfg.segment_substitutions == [{"from": "__cccl", "to": "__asc"}]
+    assert {
+        "symbol": "_CUDA_VSTD::move",
+        "kind": "qualified-name",
+        "header": "__utility/move.h",
+        "include": "cuda/std/__utility/move.h",
+    } in cfg.symbol_dependency_rules
+
+
+def test_reference_segment_substitutions_override_config(tmp_path):
+    ref = tmp_path / "reference"
+    ref.mkdir()
+    (ref / "symbol_mapping.yaml").write_text(
+        """
+segment_substitutions:
+  - from: "__cccl"
+    to: "__wrong"
+migration_policy: {}
+""",
+        encoding="utf-8",
+    )
+    cfg = Config.load(
+        None,
+        project_root=tmp_path,
+        overrides={"mapping": {"segment_substitutions": [{"from": "__cccl", "to": "__config"}]}},
+    )
+    assert cfg.segment_substitutions == [{"from": "__cccl", "to": "__wrong"}]
+
+
+def test_reference_migration_policy_overrides_config(tmp_path):
+    ref = tmp_path / "reference"
+    ref.mkdir()
+    (ref / "symbol_mapping.yaml").write_text(
+        """
+segment_substitutions:
+  - from: "__cccl"
+    to: "__asc"
+migration_policy:
+  deferred_upstream_support_prefixes: ["__unexpected/"]
+""",
+        encoding="utf-8",
+    )
+    cfg = Config.load(
+        None,
+        project_root=tmp_path,
+        overrides={"migration_policy": {"deferred_upstream_support_prefixes": ["__config/"]}},
+    )
+    assert list(cfg.migration_policy.deferred_upstream_support_prefixes) == ["__unexpected/"]
+
+
+def test_reference_policy_yaml_parse_error_rejected(tmp_path):
+    ref = tmp_path / "reference"
+    ref.mkdir()
+    (ref / "symbol_mapping.yaml").write_text("segment_substitutions: [\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="合法 YAML"):
+        Config.load(None, project_root=tmp_path)
+
+
+def test_reference_policy_requires_runtime_strategy_blocks(tmp_path):
+    ref = tmp_path / "reference"
+    ref.mkdir()
+    (ref / "symbol_mapping.yaml").write_text("symbols: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="segment_substitutions"):
+        Config.load(None, project_root=tmp_path)

@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from core import build_env
-from core.failure_triage import CODE, ENV, UNKNOWN, classify_failure
+from core.testing import build_env
+from core.testing.failure_triage import CODE, ENV, UNKNOWN, classify_failure
 
 
 # --------------------------------------------------------------------------- #

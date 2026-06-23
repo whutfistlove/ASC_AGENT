@@ -1,8 +1,0 @@
-{
-  "input_init": "h_in0[i] = (i * 7 + 3) % 19 - 9;",
-  "element_op_code": "using ic42 = asc::std::integral_constant<int32_t, 42>; ic42 ic; out0_val = in0_val + ic42::value; out1_val = in0_val + ic();",
-  "golden_code": "expected0 = in0_ref + 42; expected1 = in0_ref + 42;",
-  "gm_inputs": 1,
-  "gm_outputs": 2,
-  "dtype": "int32_t"
-}

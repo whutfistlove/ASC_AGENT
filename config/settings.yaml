@@ -20,9 +20,6 @@ mapping:
   # 用于「同步迁移测试代码」（见 core/test_migrator.py）。
   cccl_test_prefix: libcudacxx/test/libcudacxx/std
   cccl_test_suffix: .pass.cpp
-  # 目录段重命名（v2 缺失这一步，导致 os.h 的 header guard 与示例对不上）
-  segment_substitutions:
-    - { from: __cccl, to: __asc }
   module_hint_fallback: generic
 
 model:
@@ -56,7 +53,7 @@ few_shot:
 repo_verify:
   # 留空则自动探测 conda.sh；也可显式写绝对路径
   conda_sh: "${CONDA_SH:-}"
-  conda_env: accl
+  conda_env: asc-agent
   clang_format_bin: clang-format    # 不再写死 clang-format-14
   push_remote: origin
   base_branch: develop
@@ -107,10 +104,6 @@ normalize:
   fix_directive_spacing: true
   ensure_trailing_newline: true
 
-# 迁移策略（单一事实源；不写则用 core/config.py 的内置默认）。整组覆盖某项即可，
-# 例如想把某前缀纳入/移出「延期」范围、或新增手写 bootstrap 头时改这里，无需动 Python。
-# migration_policy:
-#   deferred_upstream_support_prefixes: ["__cccl/", "__internal/", "__support/", "detail/"]
-#   bootstrap_manual_coverage: { "detail/__config": "__config" }
-#   target_only_compatibility_wrappers: ["__algorithm/swap.h", "__numeric/gcd.h", "__numeric/lcm.h"]
-#   public_aggregation_headers: ["algorithm", "functional", "iterator", "numeric", "type_traits", "utility"]
+# 迁移策略不在 settings.yaml 维护；统一在 reference/symbol_mapping.yaml：
+#   segment_substitutions
+#   migration_policy

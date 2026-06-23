@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>(i % 10);",
+  "element_op_code": "float val = in0_val; float out_val = -1.0f; asc::std::remove_copy(&val, &val + 1, &out_val, 5.0f); out0_val = out_val;",
+  "golden_code": "expected0 = (in0_ref != 5.0f) ? in0_ref : -1.0f;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

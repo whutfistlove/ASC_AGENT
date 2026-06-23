@@ -1,0 +1,8 @@
+{
+  "input_init": "h_x[i] = static_cast<float>((i * 7) % 100) - 30.0f;",
+  "element_op_code": "z_val = (x_val < 0.0f) ? 0.0f : x_val;",
+  "golden_code": "expected = (x_ref < 0.0f) ? 0.0f : x_ref;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

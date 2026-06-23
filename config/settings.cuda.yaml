@@ -1,0 +1,38 @@
+# ASC_agent —— cuda/ 扩展层（非 std）迁移配置
+#
+# CCCL libcudacxx/include 下有两棵并列子树：
+#   cuda/std/  -> asc/std/   （标准库层；用默认 config/settings.yaml 迁移）
+#   cuda/      -> asc/        （CUDA 扩展层，cuda:: 命名空间；本文件负责）
+#
+# 用法（把 --settings 指到本文件即可让单文件命令按 cuda->asc 前缀映射）：
+#   python3 main.py convert --settings config/settings.cuda.yaml \
+#       --input repos/cccl/libcudacxx/include/cuda/__utility/in_range.h --show-model-io
+#
+# 说明：Config.load 把本文件深合并到 core/common/config.py 的 DEFAULTS 之上
+# （不是合并到 settings.yaml 之上），因此这里显式重述与 settings.yaml 一致的
+# model/few_shot 定制，保证 cuda/ 层与 std 层用同一档模型与工具能力。
+# paths（cccl_repo/accl_repo/output_dir/reference_dir）与 tests（SOC 版本）已与
+# DEFAULTS 一致，无需重复。
+
+project:
+  name: ASC_agent
+
+mapping:
+  # 关键差异：源/目标前缀去掉末段 std，落到 cuda/ 与 asc/ 扩展层。
+  source_repo_prefix: libcudacxx/include/cuda
+  target_repo_prefix: asc-stl/include/asc
+  # cuda/ 扩展层的 CCCL 测试树（与 std 层 .../std 并列）。
+  cccl_test_prefix: libcudacxx/test/libcudacxx/cuda
+  cccl_test_suffix: .pass.cpp
+  module_hint_fallback: generic
+
+model:
+  # 与 settings.yaml 对齐（DEFAULTS 是 glm-5/thinking:false/无工具）。
+  model_name: glm-5.1
+  thinking: true
+  tools_enabled: true
+  max_tool_rounds: 4
+
+few_shot:
+  retrieval: true
+  top_k: 2

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from core.inventory import (
+from core.analysis.inventory import (
     DEFAULT_CCCL_REPO,
     classify_header_shape,
     include_to_header_relpath,
@@ -14,6 +14,7 @@ from core.inventory import (
     parse_cuda_std_includes,
     resolve_cccl_repo,
     scan_header_inventory,
+    scan_symbol_dependencies,
     write_inventory_report,
 )
 
@@ -70,6 +71,30 @@ def test_parse_cuda_std_includes_filters_and_sorts_unique():
     ]
 
 
+def test_scan_symbol_dependencies_ignores_comments_and_literals():
+    text = (
+        "// _CUDA_VSTD::move(commented)\n"
+        'const char* s = "_CUDA_VSTD::move(string)";\n'
+        "auto x = _CUDA_VSTD::move(value);\n"
+    )
+    hits = scan_symbol_dependencies(
+        text,
+        [{"symbol": "_CUDA_VSTD::move", "header": "__utility/move.h", "include": "cuda/std/__utility/move.h"}],
+    )
+
+    assert [hit.symbol for hit in hits] == ["_CUDA_VSTD::move"]
+    assert [hit.include for hit in hits] == ["cuda/std/__utility/move.h"]
+
+
+def test_scan_symbol_dependencies_uses_identifier_boundaries():
+    hits = scan_symbol_dependencies(
+        "auto x = _CUDA_VSTD::move_if_noexcept(value);\n",
+        [{"symbol": "_CUDA_VSTD::move", "header": "__utility/move.h", "include": "cuda/std/__utility/move.h"}],
+    )
+
+    assert hits == []
+
+
 def test_include_to_header_relpath():
     assert include_to_header_relpath("cuda/std/__algorithm/max.h") == "__algorithm/max.h"
     assert include_to_header_relpath("vector") is None
@@ -100,6 +125,30 @@ def test_scan_header_inventory_from_fixture(tmp_path):
     assert headers["algorithm"].shape == "public"
     assert report.summary()["header_count"] == 4
     assert report.summary()["by_shape"] == {"private": 3, "public": 1}
+
+
+def test_scan_header_inventory_records_symbol_dependencies(tmp_path):
+    cccl_root = _seed_cccl_headers(tmp_path)
+    report = scan_header_inventory(
+        cccl_root,
+        symbol_dependency_rules=[
+            {"symbol": "_CUDA_VSTD::move", "header": "__utility/move.h", "include": "cuda/std/__utility/move.h"}
+        ],
+    )
+    headers = {h.relative_path: h for h in report.headers}
+
+    assert headers["__algorithm/max.h"].symbol_dependencies == []
+
+    move_path = cccl_root / "libcudacxx" / "include" / "cuda" / "std" / "__algorithm" / "uses_move.h"
+    move_path.write_text("_Tp tmp(_CUDA_VSTD::move(value));\n", encoding="utf-8")
+    report = scan_header_inventory(
+        cccl_root,
+        symbol_dependency_rules=[
+            {"symbol": "_CUDA_VSTD::move", "header": "__utility/move.h", "include": "cuda/std/__utility/move.h"}
+        ],
+    )
+    headers = {h.relative_path: h for h in report.headers}
+    assert headers["__algorithm/uses_move.h"].symbol_dependencies == ["cuda/std/__utility/move.h"]
 
 
 def test_write_inventory_report_is_deterministic_json(tmp_path):

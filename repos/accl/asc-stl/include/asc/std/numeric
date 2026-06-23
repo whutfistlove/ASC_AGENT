@@ -1,8 +1,0 @@
-#ifndef ASC_STD_NUMERIC
-#define ASC_STD_NUMERIC
-
-#include "asc/std/__numeric/gcd.h"
-#include "asc/std/__numeric/lcm.h"
-#include "asc/std/__numeric/midpoint.h"
-
-#endif  // ASC_STD_NUMERIC

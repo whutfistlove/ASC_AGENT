@@ -1,8 +1,8 @@
 """脚手架统一化单测：host/kernel/full 三个生成脚本共用同一 env 片段，且保留关键步骤。"""
 
-from core import scaffold_scripts as K
-from core.operator_kernel_scaffold import KERNEL_CANNSIM_SOC_VERSION
-from core.scaffold_env import env_setup_block
+from core.testing import scaffold_scripts as K
+from core.testing.operator_kernel_scaffold import KERNEL_CANNSIM_SOC_VERSION
+from core.testing.scaffold_env import env_setup_block
 
 ENV_MARK = "core/scaffold_env.py 生成"
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from core.path_mapper import (
+from core.analysis.path_mapper import (
     apply_segment_substitutions,
     expected_guard_from_relpath,
     infer_module_hint,

@@ -4,7 +4,7 @@ import shutil
 
 import pytest
 
-from core.agent_tools import AgentToolbox, parse_tool_arguments
+from core.llm.agent_tools import AgentToolbox, parse_tool_arguments
 
 
 @pytest.fixture

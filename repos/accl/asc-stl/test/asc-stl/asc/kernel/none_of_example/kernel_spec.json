@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<int32_t>((i * 2) % 20); h_in1[i] = static_cast<int32_t>(((i * 3 + 1) % 20)); h_in2[i] = static_cast<int32_t>(((i * 5 + 2) % 20)); h_in3[i] = static_cast<int32_t>(((i * 7 + 3) % 20));",
+  "element_op_code": "int32_t arr[4] = {in0_val, in1_val, in2_val, in3_val}; auto is_even = [](const int32_t& v) { return v % 2 == 0; }; out0_val = asc::std::none_of(arr, arr + 4, is_even) ? 1 : 0;",
+  "golden_code": "int32_t refs[4] = {in0_ref, in1_ref, in2_ref, in3_ref}; bool none_even = true; for (int j = 0; j < 4; ++j) { if (refs[j] % 2 == 0) { none_even = false; break; } } expected0 = none_even ? 1 : 0;",
+  "gm_inputs": 4,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

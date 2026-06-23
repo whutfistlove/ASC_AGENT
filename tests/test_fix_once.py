@@ -5,9 +5,9 @@ import json
 import pytest
 
 import main
-from core.config import Config
-from core.fix_once import build_fix_request, run_test_artifact_fix
-from core.model_client import MockModelClient
+from core.common.config import Config
+from core.llm.model_client import MockModelClient
+from core.migration.fix_once import build_fix_request, run_test_artifact_fix
 
 
 def _cfg(tmp_path) -> Config:

@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<int32_t>(i % 5);",
+  "element_op_code": "int32_t src = in0_val; int32_t dst = -999; asc::std::remove_copy_if(&src, &src + 1, &dst, [](int32_t v){ return v == 2; }); out0_val = dst;",
+  "golden_code": "expected0 = (in0_ref != 2) ? in0_ref : static_cast<int32_t>(-999);",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from core.config import Config
-from core.model_client import MockModelClient
-from core.pipeline import FakeVerifier, Pipeline
+from core.common.config import Config
+from core.llm.model_client import MockModelClient
+from core.migration.pipeline import FakeVerifier, Pipeline
 
 
 def _make_config(tmp_path) -> Config:

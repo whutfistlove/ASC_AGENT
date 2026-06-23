@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from core.dep_graph import scan_dependency_graph, write_dependency_graph_report
+from core.analysis.dep_graph import scan_dependency_graph, write_dependency_graph_report
 
 
 def _seed_cccl_headers(tmp_path):
@@ -74,6 +74,39 @@ def test_scan_dependency_graph_leaf_first_order_from_fixture(tmp_path):
     assert report.cycles == []
     assert report.summary()["edge_count"] == 3
     assert report.summary()["unknown_cuda_std_include_count"] == 1
+
+
+def test_scan_dependency_graph_adds_symbol_dependency_edges(tmp_path):
+    root = tmp_path / "cccl"
+    include_root = root / "libcudacxx" / "include" / "cuda" / "std"
+    (include_root / "__algorithm").mkdir(parents=True)
+    (include_root / "__utility").mkdir(parents=True)
+    (include_root / "__algorithm" / "swap.h").write_text(
+        "_Tp tmp(_CUDA_VSTD::move(value));\n",
+        encoding="utf-8",
+    )
+    (include_root / "__utility" / "move.h").write_text("// move\n", encoding="utf-8")
+
+    report = scan_dependency_graph(
+        root,
+        symbol_dependency_rules=[
+            {
+                "symbol": "_CUDA_VSTD::move",
+                "header": "__utility/move.h",
+                "include": "cuda/std/__utility/move.h",
+            }
+        ],
+    )
+    graph = {entry.header: entry for entry in report.graph}
+
+    swap = graph["__algorithm/swap.h"]
+    assert swap.include_dependencies == []
+    assert swap.symbol_dependencies == ["__utility/move.h"]
+    assert swap.symbol_dependency_includes == ["cuda/std/__utility/move.h"]
+    assert swap.symbol_dependency_symbols == ["_CUDA_VSTD::move"]
+    assert swap.dependencies == ["__utility/move.h"]
+    assert report.topological_order.index("__utility/move.h") < report.topological_order.index("__algorithm/swap.h")
+    assert report.summary()["symbol_dependency_edge_count"] == 1
 
 
 def test_scan_dependency_graph_reports_cycles_safely(tmp_path):

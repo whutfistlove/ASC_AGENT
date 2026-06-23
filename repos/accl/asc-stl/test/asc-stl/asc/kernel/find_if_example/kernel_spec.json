@@ -1,0 +1,8 @@
+{
+  "input_init": "h_x[i] = static_cast<int32_t>((i % 7) * 2);",
+  "element_op_code": "int32_t arr[4] = {2, 4, in0_val, 8};\nauto it = asc::std::find_if(arr, arr + 4, [](int32_t v) { return v > 5; });\nout0_val = static_cast<int32_t>(it - arr);",
+  "golden_code": "int32_t arr[4] = {2, 4, in0_ref, 8};\nint32_t idx = 3;\nfor (int k = 0; k < 4; ++k) {\n    if (arr[k] > 5) { idx = k; break; }\n}\nexpected0 = idx;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from core.config import Config
-from core.operator_test import OperatorTestRunner
+from core.common.config import Config
+from core.testing.operator_test import OperatorTestRunner
 
 
 def _make_config(tmp_path) -> Config:
@@ -167,6 +167,42 @@ def test_prepare_tests_fallback_template_without_artifacts(tmp_path):
     assert "asc::std::max" in host_text
 
 
+def test_generate_fallback_uses_range_semantic_shape(tmp_path):
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    res = runner.prepare_tests("asc-stl/include/asc/std/__algorithm/generate.h")
+    host_text = Path(res.host_test_file).read_text(encoding="utf-8")
+    kernel_dir = Path(res.kernel_test_dir)
+    kernel_cpp = (kernel_dir / "kernel.cpp").read_text(encoding="utf-8")
+    main_cpp = (kernel_dir / "main.cpp").read_text(encoding="utf-8")
+    spec_text = (kernel_dir / "kernel_spec.json").read_text(encoding="utf-8")
+
+    assert "asc::std::generate(values, values + 5, one_generator{});" in host_text
+    assert "asc::std::generate(1.0f, 2.0f)" not in host_text
+    assert "asc::std::generate(arr, arr + 1, gen);" in kernel_cpp
+    assert "asc::std::generate(x_val, y_val)" not in kernel_cpp
+    assert '"gm_inputs": 1' in spec_text
+    assert "expected0 = static_cast<int32_t>(7);" in main_cpp
+    assert "verification passed" in main_cpp
+    assert "SMOKE-ONLY" not in main_cpp
+
+
+def test_unknown_fallback_is_include_only_smoke(tmp_path):
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    res = runner.prepare_tests("asc-stl/include/asc/std/__algorithm/foo.h")
+    host_text = Path(res.host_test_file).read_text(encoding="utf-8")
+    kernel_cpp = Path(res.kernel_test_dir, "kernel.cpp").read_text(encoding="utf-8")
+
+    assert "SMOKE-ONLY" in host_text
+    assert "include-only smoke" in host_text
+    assert "asc::std::foo(1.0f, 2.0f)" not in host_text
+    assert "out0_val = x_val;" in kernel_cpp
+    assert "asc::std::foo(x_val, y_val)" not in kernel_cpp
+
+
 def test_kernel_fallback_is_smoke_not_self_consistent_green(tmp_path):
     """问题④：无 kernel_spec 时回退为显式 SMOKE，不再拿算子和自己比对造假绿。"""
     cfg = _make_config(tmp_path)
@@ -230,6 +266,39 @@ def test_kernel_pass_detection_requires_verification_marker(tmp_path):
         encoding="utf-8",
     )
     assert runner._kernel_run_test_passed(True, str(log)) is True
+
+
+def test_kernel_smoke_detection_is_not_semantic_pass(tmp_path):
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    log = cfg.output_dir / "kernel_smoke.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("KERNEL_SIM_RESULT: SMOKE (no kernel_spec; semantic golden check skipped)\n", encoding="utf-8")
+
+    assert runner._kernel_run_test_smoke_passed(True, str(log)) is True
+    assert runner._kernel_run_test_passed(True, str(log)) is False
+
+
+def test_host_smoke_result_is_not_semantic_pass(tmp_path, monkeypatch):
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=False)
+    res = runner.prepare_tests("asc-stl/include/asc/std/__algorithm/foo.h")
+
+    def fake_exec(result, cmd, cwd, log_path, timeout=None, env_extra=None):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("[host][foo][SMOKE-ONLY]\n", encoding="utf-8")
+        return True, str(log_path)
+
+    monkeypatch.setattr(runner, "_exec_and_log", fake_exec)
+
+    runner.run_host_test(res)
+
+    assert res.host_smoke_passed is True
+    assert res.host_semantic_passed is False
+    assert res.host_passed is False
+    assert res.smoke_passed is True
+    assert res.semantic_passed is False
 
 
 def test_prepare_tests_refreshes_existing_kernel_run_script(tmp_path):

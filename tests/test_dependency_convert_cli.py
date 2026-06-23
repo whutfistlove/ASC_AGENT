@@ -6,7 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
-import main as cli
+# 命令实现已迁到 cli.commands；对该模块打桩/调用，使补丁命中真实查找命名空间。
+from cli import commands as cli
 
 
 def _args(**overrides):
@@ -81,3 +82,24 @@ def test_dependency_convert_plan_only_writes_report_without_model(tmp_path, monk
     assert data["complete"] is True
     assert data["ordered_headers"] == ["__fixture/b.h", "__fixture/a.h"]
     assert [item["action"] for item in data["items"]] == ["would_rewrite", "would_rewrite"]
+
+
+def test_dependency_convert_uses_config_default_cccl_repo(tmp_path, monkeypatch):
+    project = _seed_project(tmp_path)
+    _seed_cccl(project / "repos")
+    monkeypatch.setattr(cli, "PROJECT_ROOT", project)
+    monkeypatch.setattr(cli, "DEFAULT_SETTINGS", project / "config" / "settings.yaml")
+
+    code = cli.cmd_dependency_convert(
+        _args(
+            cccl_repo=None,
+            plan_only=True,
+            output="fixture_dependency_plan_default_repo.json",
+        )
+    )
+
+    report_path = project / "outputs" / "fixture_dependency_plan_default_repo.json"
+    assert code == 0
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    assert data["entry_header"] == "__fixture/a.h"
+    assert data["complete"] is True

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from core.sample_revalidation import (
+from core.testing.sample_revalidation import (
     SampleTarget,
     build_sample_revalidation_report,
     write_sample_revalidation_report,

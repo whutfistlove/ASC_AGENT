@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from core.model_client import (
+from core.llm.model_client import (
     MockModelClient,
     extract_json_object,
     normalize_generated_text,

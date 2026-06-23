@@ -6,7 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
-import main as cli
+# 命令实现已迁到 cli.commands；对该模块打桩/调用，使补丁命中真实查找命名空间。
+from cli import commands as cli
 
 
 def _args(**overrides):

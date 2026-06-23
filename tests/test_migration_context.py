@@ -6,15 +6,15 @@ import json
 
 import pytest
 
-from core.dep_graph import scan_dependency_graph
-from core.inventory import scan_header_inventory
-from core.migration_context import (
+from core.analysis.dep_graph import scan_dependency_graph
+from core.analysis.inventory import scan_header_inventory
+from core.analysis.migration_context import (
     build_migration_context_pack,
     default_context_pack_filename,
     write_migration_context_pack,
 )
-from core.migration_status import build_migration_status_report
-from core.test_index import scan_test_index
+from core.analysis.migration_status import build_migration_status_report
+from core.analysis.test_index import scan_test_index
 
 
 def _seed_cccl(tmp_path):

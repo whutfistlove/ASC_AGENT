@@ -37,6 +37,24 @@ symbols:
     source: ["examples/headers/max.accl.h"]
     reviewed_by: agent
     reviewed_at: "2026-06-15"
+  - cccl: "_LIBCUDACXX_BEGIN_NAMESPACE_STD"
+    asc: "_ASC_STD_BEGIN"
+    kind: namespace-macro
+    status: mapped
+    always_inject: true
+    note: "libcudacxx 较新/局部头常用的 std 命名空间起始宏；ASC-STL 统一使用 _ASC_STD_BEGIN"
+    source: ["examples/headers/sort3.cccl.h", "examples/headers/sort3.accl.h", "examples/headers/quad_fanout.cccl.h", "examples/headers/quad_fanout.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+  - cccl: "_LIBCUDACXX_END_NAMESPACE_STD"
+    asc: "_ASC_STD_END"
+    kind: namespace-macro
+    status: mapped
+    always_inject: true
+    note: "libcudacxx 较新/局部头常用的 std 命名空间结束宏；ASC-STL 统一使用 _ASC_STD_END"
+    source: ["examples/headers/sort3.cccl.h", "examples/headers/sort3.accl.h", "examples/headers/quad_fanout.cccl.h", "examples/headers/quad_fanout.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
   - cccl: "_CCCL_API"
     asc: "_ASC_AICORE_FN"
     kind: fn-qualifier
@@ -55,6 +73,15 @@ symbols:
     source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
     reviewed_by: agent
     reviewed_at: "2026-06-15"
+  - cccl: "_CUDA_VSTD::"
+    asc: "asc::std::"
+    kind: qualified-name
+    status: mapped
+    always_inject: true
+    note: "libcudacxx 内部把 _CUDA_VSTD 作为 cuda::std 命名空间别名使用；迁移后应显式写 asc::std::"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__algorithm/swap.h", "examples/headers/swap.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
   - cccl: "#include <cuda/std/...>"
     asc: '#include "asc/std/..."'
     kind: include-form
@@ -73,6 +100,15 @@ symbols:
     source: ["examples/headers/max.accl.h"]
     reviewed_by: agent
     reviewed_at: "2026-06-15"
+  - cccl: "<cuda/std/cstddef>"
+    asc: "<cstddef>"
+    kind: include-form
+    status: mapped
+    always_inject: true
+    note: "CCCL 的 cuda/std/cstddef 在 ASC-STL 示例中落到标准 <cstddef>，用于 size_t 等基础类型"
+    source: ["examples/headers/swap.cccl.h", "examples/headers/swap.accl.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
   - cccl: "_CUDA_STD_<...>_H  (header guard)"
     asc: "ASC_STL_INCLUDE_ASC_STD_<...>_H_  (header guard)"
     kind: guard
@@ -110,23 +146,81 @@ symbols:
     reviewed_by: agent
     reviewed_at: "2026-06-15"
 
-# 路径段替换（与 core/config.py mapping.segment_substitutions 同源）。
+# 源码符号隐含依赖。用于依赖图，不直接作为文本改写规则。
+# 这类规则解决「源码里用了符号，但没有显式 include」的问题。
+symbol_dependencies:
+  - symbol: "_CUDA_VSTD::move"
+    header: "__utility/move.h"
+    include: "cuda/std/__utility/move.h"
+    kind: qualified-name
+    status: mapped
+    note: "_CUDA_VSTD::move 在 libcudacxx 中由 __utility/move.h 提供；即使源头未显式 include，也应作为迁移闭包依赖"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__algorithm/swap.h", "repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+  - symbol: "cuda::std::move"
+    header: "__utility/move.h"
+    include: "cuda/std/__utility/move.h"
+    kind: qualified-name
+    status: mapped
+    note: "显式 cuda::std::move 符号依赖 __utility/move.h"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+  - symbol: "::cuda::std::move"
+    header: "__utility/move.h"
+    include: "cuda/std/__utility/move.h"
+    kind: qualified-name
+    status: mapped
+    note: "完全限定 ::cuda::std::move 符号依赖 __utility/move.h"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+  - symbol: "_CUDA_VSTD::move_if_noexcept"
+    header: "__utility/move.h"
+    include: "cuda/std/__utility/move.h"
+    kind: qualified-name
+    status: mapped
+    note: "move_if_noexcept 与 move 同由 __utility/move.h 提供"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+  - symbol: "cuda::std::move_if_noexcept"
+    header: "__utility/move.h"
+    include: "cuda/std/__utility/move.h"
+    kind: qualified-name
+    status: mapped
+    note: "显式 cuda::std::move_if_noexcept 符号依赖 __utility/move.h"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+  - symbol: "::cuda::std::move_if_noexcept"
+    header: "__utility/move.h"
+    include: "cuda/std/__utility/move.h"
+    kind: qualified-name
+    status: mapped
+    note: "完全限定 ::cuda::std::move_if_noexcept 符号依赖 __utility/move.h"
+    source: ["repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+    reviewed_by: agent
+    reviewed_at: "2026-06-19"
+
+# 路径段替换。Config.load() 会直接读取这里并写入运行时 config；
 # path_mapper 据此把 cuda/std/__cccl/... 段改写为 asc/std/__asc/...。
 segment_substitutions:
   - from: "__cccl"
     to: "__asc"
-    source: ["core/config.py DEFAULTS.mapping.segment_substitutions"]
+    source: ["reference/symbol_mapping.yaml runtime strategy"]
     reviewed_by: agent
     reviewed_at: "2026-06-15"
 
-# 迁移策略（与 core/config.py DEFAULTS.migration_policy / MigrationPolicy 同源）。
-# 此处为可审计的外化记录；运行期当前仍由 config 提供默认值（见 reference/README.md 待办）。
+# 迁移策略。Config.load() 会直接读取这里并写入运行时 config；
+# 修改策略时只改这里，不要在 settings.yaml/core/config.py 另建一份。
 migration_policy:
   deferred_upstream_support_prefixes: ["__cccl/", "__internal/", "__support/", "detail/"]
   bootstrap_manual_coverage:
     "detail/__config": "__config"
   target_only_compatibility_wrappers: ["__algorithm/swap.h", "__numeric/gcd.h", "__numeric/lcm.h"]
   public_aggregation_headers: ["algorithm", "functional", "iterator", "numeric", "type_traits", "utility"]
-  source: ["core/config.py DEFAULTS.migration_policy"]
+  source: ["reference/symbol_mapping.yaml runtime strategy"]
   reviewed_by: agent
   reviewed_at: "2026-06-15"

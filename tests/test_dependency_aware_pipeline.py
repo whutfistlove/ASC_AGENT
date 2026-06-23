@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core.config import Config
-from core.dep_graph import scan_dependency_graph
-from core.inventory import scan_header_inventory
-from core.migration_status import build_migration_status_report
-from core.model_client import MockModelClient
-from core.pipeline import Pipeline
-from core.test_index import scan_test_index
+from core.analysis.dep_graph import scan_dependency_graph
+from core.analysis.inventory import scan_header_inventory
+from core.analysis.migration_status import build_migration_status_report
+from core.analysis.test_index import scan_test_index
+from core.common.config import Config
+from core.llm.model_client import MockModelClient
+from core.migration.pipeline import Pipeline
 
 
 def _make_config(tmp_path) -> Config:

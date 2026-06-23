@@ -2,7 +2,7 @@
 
 import pytest
 
-from core.config import Config
+from core.common.config import Config
 
 
 def _cfg(tmp_path) -> Config:

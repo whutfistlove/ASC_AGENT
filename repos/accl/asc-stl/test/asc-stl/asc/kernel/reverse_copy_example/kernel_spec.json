@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<float>(i % 97) - 40.0f; h_in1[i] = static_cast<float>((i * 7) % 97) - 50.0f;",
+  "element_op_code": "float src[2] = {in0_val, in1_val}; float dst[2] = {0, 0}; asc::std::reverse_copy(src, src + 2, dst); out0_val = dst[0]; out1_val = dst[1];",
+  "golden_code": "expected0 = in1_ref; expected1 = in0_ref;",
+  "gm_inputs": 2,
+  "gm_outputs": 2,
+  "dtype": "float"
+}
