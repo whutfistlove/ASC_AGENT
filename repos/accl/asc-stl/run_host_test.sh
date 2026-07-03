@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host test for replace_copy_if. (生成自 core/scaffold_scripts.py)
+# Host test for undefined. (生成自 core/scaffold_scripts.py)
 
 # ---- 统一环境准备（core/scaffold_env.py 生成，host/kernel 共用）----
 for __conda_sh in "$CONDA_SH" "$HOME/miniforge3/etc/profile.d/conda.sh" \
@@ -54,5 +54,5 @@ fi
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-make replace_copy_if_host_test
-ctest -R "host\.replace_copy_if$" -V
+make undefined_host_test
+ctest -R "host\.undefined$" -V

@@ -81,7 +81,7 @@ TOOL_SCHEMAS: list[dict] = [
         "function": {
             "name": "extract_error_lines",
             "description": "从一份大日志里抽取真正的 error/warning 行及其上下文（host/kernel 日志可达数万行）。"
-            "传 log_name（outputs 下的日志文件名）或直接传 text。",
+            "传 log_name（outputs/tests/ 下的日志文件名，如 kernel_test_sort3.log）或直接传 text。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -145,6 +145,7 @@ class AgentToolbox:
         target_repo: Path,
         output_dir: Path,
         *,
+        tool_log_dir: Path | None = None,
         host_include_dirs: list[Path] | None = None,
         max_read_bytes: int = 20000,
         max_grep_matches: int = 50,
@@ -152,7 +153,10 @@ class AgentToolbox:
         compile_timeout: int = 60,
     ):
         self.target_repo = Path(target_repo).resolve()
+        # output_dir：extract_error_lines 解析 log_name 的根（测试日志所在目录）。
         self.output_dir = Path(output_dir).resolve()
+        # tool_log_dir：tool_calls_*.json 审计落盘目录（默认与 output_dir 同）。
+        self.tool_log_dir = Path(tool_log_dir).resolve() if tool_log_dir else self.output_dir
         self.host_include_dirs = [Path(p) for p in (host_include_dirs or [])]
         self.max_read_bytes = max_read_bytes
         self.max_grep_matches = max_grep_matches
@@ -296,7 +300,8 @@ def build_toolbox(config):
     include_dir = Path(config.target_repo) / "asc-stl" / "include"
     return AgentToolbox(
         target_repo=Path(config.target_repo),
-        output_dir=config.output_dir,
+        output_dir=config.tests_output_dir,   # 测试日志在 outputs/tests/，供 extract_error_lines 解析
+        tool_log_dir=config.model_output_dir,  # tool_calls_*.json 归 model 类
         host_include_dirs=[include_dir],
     )
 

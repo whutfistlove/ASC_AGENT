@@ -21,9 +21,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core.analysis.migration_state import VALIDATED_STATUSES
 from core.analysis.test_index import CCCLTestIndexEntry, CCCLTestIndexReport
 from core.common.config import Config
-from core.common.utils import call_model_maybe_tools, read_text_file, save_text
+from core.common.utils import call_model_maybe_tools, call_model_with_io, read_text_file, save_text
 from core.knowledge.example_retrieval import select_test_examples
 from core.knowledge.knowledge_base import load_knowledge_base
 from core.llm.best_of_n import best_of_n, score_host_test_code
@@ -50,7 +51,8 @@ _HOST_EXPECTED_USES_TESTED_API_RE = re.compile(
     r"\b(?:[\w:<>]+\s+)*(?:expected|golden|oracle|reference)\w*\s*=\s*[^;]*\basc::std::",
     flags=re.IGNORECASE,
 )
-_SAFE_DEPENDENCY_STATUSES = {"host_passed", "kernel_passed", "full_passed"}
+# 依赖「已就绪、可选其测试」的状态集合，复用 migration_state 的单一事实源。
+_SAFE_DEPENDENCY_STATUSES = VALIDATED_STATUSES
 _TEST_DIRECTORY_PREFIX_BY_MODULE = {
     "__algorithm": "algorithms/",
     "__functional": "utilities/",
@@ -503,6 +505,94 @@ def build_test_migration_request(
 """
 
 
+_HOST_SYNTAX_REPAIR_SYSTEM = (
+    "你是 ASC-STL host 测试修复助手。只修复给定 host 测试的编译/语法错误，"
+    "保持用例语义不变。只输出 JSON 对象。"
+)
+
+
+def _host_syntax_check_passed(diag: str) -> bool:
+    return diag.startswith("OK")
+
+
+def _build_host_syntax_repair_request(host_code: str, diagnostics: str) -> str:
+    return f"""【任务】修复下面这段 ACCL host 测试，使其能通过 g++ -fsyntax-only -std=c++17 编译。
+
+【硬约束】
+1. 只修编译/语法错误（如缺分号、声明位置、推导指引/模板写法），保持原有用例与断言语义不变。
+2. 必须保留：任一用例失败时进程返回非零（例如累计 g_failures 后 return g_failures == 0 ? 0 : 1）。
+3. expected/golden 不得调用 asc::std::*（保持独立参考实现）。
+4. 若错误其实出在被包含的 asc/std 头（而非测试本身），在 notes 说明，不要臆改测试逻辑。
+5. 只输出 JSON：{{"host_test_code": "<完整修复后的 .cpp>", "notes": "<改动说明>"}}。
+
+【当前 host 测试】
+{host_code}
+
+【g++ -fsyntax-only 诊断】
+{diagnostics}
+"""
+
+
+def ensure_host_test_compiles(
+    model_client: BaseModelClient,
+    host_code: str,
+    *,
+    toolbox,
+    output_dir: Path,
+    algo_name: str,
+    rounds: int,
+    verbose: bool = True,
+    show_model_io: bool = False,
+) -> tuple[str, dict]:
+    """生成期强制 g++ 语法自检：失败则回灌模型修复，最多 ``rounds`` 轮（根本性兜底）。
+
+    把「漏分号」这类编译错挡在生成阶段，而不是拖到 cmake/cannsim。无 toolbox / 无 g++ 时安全跳过
+    （离线/mock 不受影响）。仅当诊断指向测试本身（snippet.cpp）才回灌——纯头依赖缺口不浪费模型调用。
+    返回 (最终 host_code, 审计信息 dict)。
+    """
+    info: dict = {"checked": False, "passed": None, "attempts": 0}
+    if toolbox is None or not hasattr(toolbox, "host_syntax_check") or rounds < 0:
+        return host_code, info
+    info["checked"] = True
+    for attempt in range(rounds + 1):
+        diag = toolbox.host_syntax_check(host_code)
+        if _host_syntax_check_passed(diag):
+            info.update(passed=True, attempts=attempt)
+            return host_code, info
+        if "未找到编译器" in diag:
+            info.update(passed=None, no_compiler=True)
+            return host_code, info
+        info["last_diagnostics"] = diag[:1000]
+        # 错误若不在测试本身（snippet.cpp）而在被包含的头 -> 测试改不了，交给下游测试反馈循环。
+        if "snippet.cpp" not in diag:
+            info.update(passed=False, attempts=attempt, header_side=True)
+            return host_code, info
+        if attempt >= rounds:
+            info.update(passed=False, attempts=attempt)
+            break
+        if verbose:
+            print(f"[host-syntax] {algo_name}: 第 {attempt + 1} 轮编译自检失败，回灌模型修复...")
+        request = _build_host_syntax_repair_request(host_code, diag)
+        save_text(output_dir / f"host_syntax_repair_{algo_name}_round{attempt + 1}.md", request)
+        try:
+            raw = call_model_with_io(
+                model_client, stage=f"host 语法自检修复（{algo_name}）",
+                system_prompt=_HOST_SYNTAX_REPAIR_SYSTEM, user_content=request, show_io=show_model_io,
+            )
+            data = extract_json_object(raw, strict=False)
+            fixed = data.get("host_test_code")
+            if not fixed or not str(fixed).strip():
+                info["note"] = "模型未返回 host_test_code，停止修复"
+                info.update(passed=False, attempts=attempt + 1)
+                break
+            host_code = validate_host_test_code(fixed, algo_name=algo_name)
+        except Exception as exc:  # 单轮修复失败不应让整个测试迁移崩
+            info["note"] = f"修复失败: {type(exc).__name__}: {exc}"
+            info.update(passed=False, attempts=attempt + 1)
+            break
+    return host_code, info
+
+
 def migrate_operator_tests(
     config: Config,
     model_client: BaseModelClient,
@@ -518,6 +608,7 @@ def migrate_operator_tests(
     dependency_status_by_header: dict[str, str] | None = None,
     scaffold_inexpressible_tests: set[str] | None = None,
     prompt_filename: str = "migrate_tests.md",
+    kernel_required: bool = True,
     verbose: bool = True,
     show_model_io: bool = False,
     toolbox=None,
@@ -528,7 +619,7 @@ def migrate_operator_tests(
     toolbox 非空且客户端支持时，模型可先读 ACCL 头真实签名 / grep 符号 / g++ 自检
     host 测试，再产出迁移结果（生成期取证），否则回退「单轮 prompt→JSON」。
     """
-    out = config.output_dir
+    out = config.model_output_dir
     upstream_plan: UpstreamTestPlan | None = None
     if test_index is not None and entry_header:
         upstream_plan = plan_upstream_tests_for_header(
@@ -557,6 +648,13 @@ def migrate_operator_tests(
         upstream_test_plan_text=_format_upstream_test_plan(upstream_plan),
         knowledge_block=knowledge_block,
     )
+    if not kernel_required:
+        # host-only 头（类型特征/宏/host-stdlib）无设备算子：无需 kernel_spec。
+        request_text += (
+            "\n【kernel 适用性】\n"
+            "本头被判定为 host-only（无设备侧算子）。无需生成 kernel_spec："
+            "kernel_spec 可省略或留空，只需给出可编译、能在任一用例失败时返回非零的 host_test_code。\n"
+        )
     save_text(out / "test_migrate_request.md", request_text)
 
     prompt_text = config.read_skill(prompt_filename)
@@ -577,9 +675,18 @@ def migrate_operator_tests(
 
     def _parse(text: str) -> dict:
         d = extract_json_object(text)
+        raw_spec = d.get("kernel_spec", {})
+        if kernel_required:
+            kernel_spec = validate_kernel_spec(raw_spec)
+        else:
+            # host-only：kernel_spec 可选——给了且合法就保留，否则留空（不阻塞测试迁移）。
+            try:
+                kernel_spec = validate_kernel_spec(raw_spec) if raw_spec else {}
+            except ValueError:
+                kernel_spec = {}
         return {
             "host_test_code": validate_host_test_code(d.get("host_test_code", ""), algo_name=algo_name),
-            "kernel_spec": validate_kernel_spec(d.get("kernel_spec", {})),
+            "kernel_spec": kernel_spec,
             "notes": str(d.get("notes", "")).strip(),
         }
 
@@ -598,6 +705,12 @@ def migrate_operator_tests(
     save_text(out / "test_migrate_raw.md", raw)
 
     host_test_code = parsed["host_test_code"]
+    # 生成期强制 g++ 语法自检 + 失败回灌修复（根本性兜底；把漏分号这类编译错挡在源头）。
+    host_test_code, syntax_info = ensure_host_test_compiles(
+        model_client, host_test_code,
+        toolbox=toolbox, output_dir=out, algo_name=algo_name,
+        rounds=config.host_syntax_repair_rounds, verbose=verbose, show_model_io=show_model_io,
+    )
     kernel_spec = parsed["kernel_spec"]
     notes = parsed["notes"]
 
@@ -605,6 +718,7 @@ def migrate_operator_tests(
         "host_test_code": host_test_code.rstrip("\n"),
         "kernel_spec": kernel_spec,
         "notes": notes,
+        "host_syntax_check": syntax_info,
         "upstream_test_plan": upstream_plan.to_dict() if upstream_plan else None,
     }
     save_text(out / "test_migrate_result.json", json.dumps(result, ensure_ascii=False, indent=2))

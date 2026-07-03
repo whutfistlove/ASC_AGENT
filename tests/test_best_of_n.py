@@ -117,5 +117,5 @@ def test_pipeline_best_of_n_selects_better_header(tmp_path):
 
     assert res.converted is True
     assert len(model.calls) == 2  # 采样 2 次
-    written = (cfg.output_dir / "rewritten_target.h").read_text(encoding="utf-8")
+    written = (cfg.model_output_dir / "rewritten_target.h").read_text(encoding="utf-8")
     assert "#ifndef G" in written and "broken no directives" not in written

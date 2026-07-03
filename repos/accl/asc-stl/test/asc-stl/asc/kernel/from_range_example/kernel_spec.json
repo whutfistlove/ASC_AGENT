@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = 0;",
+  "element_op_code": "asc::std::from_range_t fr = asc::std::from_range; (void)fr; out0_val = 1;",
+  "golden_code": "expected0 = 1;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

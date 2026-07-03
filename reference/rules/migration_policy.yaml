@@ -1,0 +1,9 @@
+deferred_upstream_support_prefixes: ["__cccl/", "__internal/", "__support/", "detail/"]
+bootstrap_manual_coverage:
+  "detail/__config": "__config"
+target_only_compatibility_wrappers: ["__algorithm/swap.h", "__numeric/gcd.h", "__numeric/lcm.h"]
+public_aggregation_headers: ["algorithm", "functional", "iterator", "numeric", "type_traits", "utility"]
+source: ["reference/rules/migration_policy.yaml"]
+reviewed_by: agent
+reviewed_at: "2026-07-01"
+

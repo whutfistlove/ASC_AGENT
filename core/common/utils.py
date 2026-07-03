@@ -102,9 +102,10 @@ def call_model_maybe_tools(model, *, stage: str, system_prompt: str, user_conten
     this_stage = calls[before:]
     names = ", ".join(c.get("name", "?") for c in this_stage) or "无"
     print(f"[tools] {stage}：本阶段 AI 辅助工具调用 {len(this_stage)} 次（{names}）")
-    if tool_log_tag and hasattr(toolbox, "dump_call_log") and getattr(toolbox, "output_dir", None):
+    tool_log_dir = getattr(toolbox, "tool_log_dir", None) or getattr(toolbox, "output_dir", None)
+    if tool_log_tag and hasattr(toolbox, "dump_call_log") and tool_log_dir:
         try:
-            toolbox.dump_call_log(Path(toolbox.output_dir) / f"tool_calls_{tool_log_tag}.json")
+            toolbox.dump_call_log(Path(tool_log_dir) / f"tool_calls_{tool_log_tag}.json")
         except Exception:
             pass
     return raw

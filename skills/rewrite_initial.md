@@ -13,7 +13,7 @@
 5. 待改写的 CCCL 文件内容
 6. 两组成功示例（CCCL → ASCL）
 7. （已注入）`reference/` 可审计知识库命中项：符号/宏/命名空间映射、适用语法与约束规则——**映射以此为准**
-8. 可选的 bounded migration context pack：依赖闭包、现有 ASCL 对应文件、sibling、映射测试、validated examples
+8. 可选的 bounded migration context pack：依赖闭包、现有 ASCL 对应文件、**已迁移的直接依赖头 `migrated_accl_dependencies`（ASCL 侧真实内容）**、sibling、映射测试、validated examples
 
 ## 非协商规则（违反即作废）
 
@@ -27,6 +27,7 @@
    `#include <cuda/std/...> → #include "asc/std/..."`）。命中的约束（如 device-side double）按其 action 处理。
 7. 参考示例学**映射规则**，不要机械复制示例文本。
 8. 提供了 context pack 时，优先用它判断依赖、已存在目标、sibling 风格与测试语义；不要扩散到 pack 之外的大范围迁移。
+9. **按已迁移依赖的真实接口消费依赖**：`migrated_accl_dependencies` 给出本头**直接依赖**在 ASCL 侧**迁移后**的真实内容。改写本头时，凡是 `#include`/调用这些依赖，必须对齐其 ASCL 版接口（include 形态、宏名、命名空间、函数/模板签名），**不得照搬 CCCL 侧的 B 接口**。该字段未覆盖的传递依赖，用 `read_repo_file` 按依赖节点的 `target_relpath` 自行核对。
 
 ## 代码风格约束
 

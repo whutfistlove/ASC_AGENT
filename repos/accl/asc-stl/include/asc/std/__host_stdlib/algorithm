@@ -1,0 +1,20 @@
+#ifndef ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_ALGORITHM_
+#define ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_ALGORITHM_
+
+#include "asc/std/__config"
+
+#if defined(__CCE__)
+#define ASC_DEVICE_CODE
+#else
+#include <algorithm>
+#endif
+
+// [MIGRATION NOTE] The original CCCL header brought in the host's <algorithm>
+// under _CCCL_HOSTED() (the host-compile branch), guarded by
+// THRUST_INCLUDING_ALGORITHMS_HEADER to break NVC++/Thrust include cycles.
+// ASC-STL has no _CCCL_HOSTED, so the host branch becomes the non-__CCE__ path:
+// on host we include the system <algorithm>; on device (__CCE__) there is no
+// host STL, so it is a no-op. The Thrust/NVC++ cycle-breaking macro is
+// toolchain-specific and has been dropped.
+
+#endif // ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_ALGORITHM_

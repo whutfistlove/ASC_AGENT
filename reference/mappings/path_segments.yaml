@@ -1,0 +1,6 @@
+- from: "__cccl"
+  to: "__asc"
+  source: ["reference/mappings/path_segments.yaml"]
+  reviewed_by: agent
+  reviewed_at: "2026-07-01"
+

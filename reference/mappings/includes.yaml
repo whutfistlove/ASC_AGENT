@@ -1,0 +1,27 @@
+- cccl: "#include <cuda/std/...>"
+  asc: '#include "asc/std/..."'
+  status: mapped
+  always_inject: true
+  note: "路径前缀映射；路径段映射由 path_segments.yaml 处理"
+  source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "<cuda/std/detail/__config>"
+  asc: '"asc/std/__config"'
+  status: mapped
+  always_inject: true
+  note: "目标 bootstrap 配置头"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "<cuda/std/cstddef>"
+  asc: "<cstddef>"
+  status: mapped
+  always_inject: true
+  note: "基础 size_t 等类型使用 host 标准头"
+  source: ["examples/headers/swap.cccl.h", "examples/headers/swap.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-19"
+

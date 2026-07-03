@@ -1,6 +1,6 @@
 # Rule Schema
 
-`grammar_rules.yaml` and `constraint_rules.yaml` are the source of truth for syntax-rewrite rules and migration constraint rules.
+`rules/grammar.yaml`, `rules/constraints.yaml`, and `rules/implicit_dependencies.yaml` are the source of truth for reusable migration rules.
 
 The Markdown files remain human-readable browse views:
 
@@ -9,9 +9,9 @@ The Markdown files remain human-readable browse views:
 
 Update the YAML files first. Keep the Markdown views aligned afterward.
 
-## `grammar_rules.yaml`
+## `rules/grammar.yaml`
 
-Use `grammar_rules.yaml` to record syntax-level rewrite rules for CUDA source code that must be adjusted for Ascend C SIMT.
+Use `rules/grammar.yaml` to record syntax-level rewrite rules for CUDA source code that must be adjusted for Ascend C SIMT.
 
 ### Record Structure
 
@@ -96,9 +96,9 @@ Use `grammar_rules.yaml` to record syntax-level rewrite rules for CUDA source co
 - If the rewrite rule is uncertain, keep `status: unknown` or `status: conditional`.
 - Prefer short `cuda_form` and `ascend_form` examples over long code blocks.
 
-## `constraint_rules.yaml`
+## `rules/constraints.yaml`
 
-Use `constraint_rules.yaml` to record unsupported or restricted features in the current migration model.
+Use `rules/constraints.yaml` to record unsupported or restricted features in the current migration model.
 
 ### Record Structure
 
@@ -183,6 +183,32 @@ Use `constraint_rules.yaml` to record unsupported or restricted features in the 
 - Use `restricted` when a workaround exists but carries limits or extra migration work.
 - If the rule still needs confirmation, use `conditional` or `unknown`; do not overstate support.
 - Keep workarounds short in YAML and move long explanations to Markdown if needed.
+
+## `rules/implicit_dependencies.yaml`
+
+Use this file for reusable source-pattern rules that infer an in-tree provider header. Do not add one row per concrete API spelling when a capture group can express the family.
+
+```yaml
+- rule_id: qualified-cuda-std-provider
+  kind: qualified-name
+  pattern: '(?:_CUDA_VSTD|(?:::)?cuda::std)::(?P<symbol>[A-Za-z_]\w*)'
+  resolver: header_stem
+  symbol_group: symbol
+  provider_modules: [__utility, __type_traits, __functional]
+  prefix_fallback: true
+  include_template: "{namespace}/{header}"
+```
+
+Key fields:
+
+- `pattern`: Python regular expression; it must expose the configured `symbol_group`.
+- `resolver`: currently `header_stem`, which resolves against the real source-tree header index.
+- `provider_modules`: optional allowlist used to keep inference conservative and prevent reverse/umbrella edges.
+- `header_globs`: optional candidate filters after exact symbol capture.
+- `prefix_fallback`: optional longest-stem fallback; keep it disabled in broad rules unless the family is provably safe. Prefer an explicit `symbol_providers.yaml` exception.
+- `include_template`: formats the resulting include from `namespace`, `header`, and `symbol`.
+
+If resolution is missing or ambiguous, the scanner emits no edge. Put non-conventional provider exceptions in a concrete mapping dataset rather than weakening the generic resolver.
 
 ## General Update Workflow
 

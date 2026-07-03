@@ -51,12 +51,16 @@ class OperatorTestResult:
     kernel_failure_kind: str = ""
     host_skipped_reason: str = ""
     kernel_skipped_reason: str = ""
+    kernel_requirement_decision: dict = field(default_factory=dict)
     commands: list[str] = field(default_factory=list)
     error: str = ""
 
     def to_dict(self) -> dict:
-        self.refresh_acceptance()
-        return asdict(self)
+        # 纯读：派生字段就地重算到输出，不再修改 self（序列化器无副作用）。
+        data = asdict(self)
+        data["semantic_passed"] = bool(self.host_semantic_passed or self.kernel_semantic_passed)
+        data["smoke_passed"] = bool(self.host_smoke_passed or self.kernel_smoke_passed)
+        return data
 
     def refresh_acceptance(self) -> None:
         self.semantic_passed = bool(self.host_semantic_passed or self.kernel_semantic_passed)
@@ -80,10 +84,14 @@ class OperatorTestRunner:
         host_timeout_sec: int | None = None,
         fast_kernel: bool | None = None,
         kernel_print_samples: int | None = None,
+        force_kernel: bool = False,
     ):
         self.config = config
         self.verbose = verbose
         self.dry_run = dry_run
+        # host-only 头（type_trait/宏/host-stdlib）无设备算子，跳过 kernel；force_kernel 可强制。
+        self.force_kernel = force_kernel
+        self._host_only_modules = getattr(config, "kernel_host_only_modules", None)
         # kernel 逐元素打印条数（None=用 main.cpp 默认 8；负数=全部）。
         self._kernel_print_samples = kernel_print_samples
 
@@ -107,7 +115,7 @@ class OperatorTestRunner:
         self._asc_stl = self._target_repo / "asc-stl"
         self._host_dir = self._asc_stl / "test" / "asc-stl" / "asc" / "host"
         self._kernel_root = self._asc_stl / "test" / "asc-stl" / "asc" / "kernel"
-        self._outputs = config.output_dir
+        self._outputs = config.tests_output_dir
 
     def _log(self, *args) -> None:
         if self.verbose:
@@ -443,6 +451,64 @@ class OperatorTestRunner:
         """
         save_text(kernel_dir / "cmake" / "npu_lib.cmake", KernelScaffoldBuilder.npu_lib_cmake())
 
+    def _cccl_source_path(self, target_relpath: str) -> Path | None:
+        """把目标 relpath 反映射回 CCCL 源头路径（算子本质的事实源）。
+
+        反向：剥目标前缀 → 反向段替换(__asc→__cccl) → 拼源前缀。失败返回 None。
+        """
+        from core.analysis.path_mapper import apply_segment_substitutions, normalize_path_str
+
+        cfg = self.config
+        prefix = normalize_path_str(cfg.target_repo_prefix).rstrip("/") + "/"
+        rel = normalize_path_str(target_relpath)
+        if prefix not in rel:
+            return None
+        tail = rel.split(prefix, 1)[1]
+        reverse = [{"from": s["to"], "to": s["from"]} for s in cfg.segment_substitutions]
+        tail = apply_segment_substitutions(tail, reverse)
+        return Path(cfg.cccl_repo) / cfg.source_repo_prefix / tail
+
+    def _classification_text(self, target_relpath: str) -> str:
+        """分类用文本：优先 CCCL 源头（不受 mock/半成品目标头影响），回退已迁移目标头。"""
+        candidates: list[Path] = []
+        src = self._cccl_source_path(target_relpath)
+        if src is not None:
+            candidates.append(src)
+        candidates.append(self._target_repo / target_relpath)
+        for path in candidates:
+            try:
+                if path.is_file():
+                    return path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        return ""
+
+    def kernel_required(self, target_relpath: str) -> bool:
+        """该头是否需要 kernel 侧测试。host-only（type_trait/宏/CTAD/host-stdlib）返回 False。
+
+        以 CCCL 源头内容 + 模块为信号（算子本质的事实源；优先源、回退目标）；force_kernel 时恒为真。
+        分类不确定（unknown）时保守返回 True，照常尝试 kernel。
+        """
+        if self.force_kernel:
+            return True
+        from core.testing.kernel_requirement import needs_kernel_test
+
+        text = self._classification_text(target_relpath)
+        return needs_kernel_test(target_relpath, text, host_only_modules=self._host_only_modules)
+
+    def _mark_kernel_not_applicable(self, result: OperatorTestResult) -> None:
+        """host-only 头：kernel 不适用——不运行、不计失败、不退 smoke。"""
+        result.kernel_ran = False
+        result.kernel_passed = False
+        result.kernel_semantic_passed = False
+        result.kernel_smoke_passed = False
+        result.kernel_failure_kind = "not_applicable"
+        result.kernel_skipped_reason = (
+            "header has no device-side operator (type-trait/macro/host-only); kernel test not applicable"
+        )
+        result.refresh_acceptance()
+        self._log(f"[test] {result.algo_name}: kernel 不适用（host-only 头），跳过 kernel 测试。")
+
     def prepare_tests(
         self,
         target_relpath: str,
@@ -450,6 +516,7 @@ class OperatorTestRunner:
         *,
         host_test_code: str | None = None,
         kernel_spec: dict | None = None,
+        prepare_kernel: bool = True,
     ) -> OperatorTestResult:
         """生成 host/kernel 测试脚手架。
 
@@ -462,11 +529,8 @@ class OperatorTestRunner:
         result.include_path = self.include_path_from_target_relpath(target_relpath)
 
         self._host_dir.mkdir(parents=True, exist_ok=True)
-        self._kernel_root.mkdir(parents=True, exist_ok=True)
 
         host_file = self._host_dir / f"{result.algo_name}_tests.cpp"
-        kernel_dir = self._kernel_root / f"{result.algo_name}_example"
-        kernel_dir.mkdir(parents=True, exist_ok=True)
 
         if host_test_code and host_test_code.strip():
             # 模型迁移的 host 测试：直接写入（最新产物，覆盖旧文件）。
@@ -482,6 +546,12 @@ class OperatorTestRunner:
         result.host_prepared = True
         result.host_test_file = str(host_file)
 
+        # host-only 头不生成 kernel 脚手架（无设备算子可仿真）。
+        if not prepare_kernel:
+            return result
+        self._kernel_root.mkdir(parents=True, exist_ok=True)
+        kernel_dir = self._kernel_root / f"{result.algo_name}_example"
+        kernel_dir.mkdir(parents=True, exist_ok=True)
         self._write_kernel_cmake(kernel_dir)
         # CMakeLists.txt is generated fixed scaffolding; refresh it so CANN linker
         # compatibility fixes take effect in existing *_example directories.
@@ -784,14 +854,46 @@ class OperatorTestRunner:
         overwrite: bool = False,
         host_test_code: str | None = None,
         kernel_spec: dict | None = None,
+        kernel_required_override: bool | None = None,
+        kernel_requirement_decision: dict | None = None,
     ) -> OperatorTestResult:
         try:
+            decision = dict(kernel_requirement_decision or {})
+            if not run_kernel:
+                kernel_required = False
+            elif self.force_kernel:
+                kernel_required = True
+                decision.update(
+                    needs_kernel_test=True,
+                    resolution="force_kernel",
+                )
+            elif kernel_required_override is not None:
+                kernel_required = bool(kernel_required_override)
+                decision.setdefault("needs_kernel_test", kernel_required)
+                decision.setdefault("resolution", "consensus_override")
+            else:
+                # Without a model consensus, rule-only host_only is insufficient
+                # to suppress device validation. This is the same conservative
+                # policy used for model errors/disagreements.
+                rule_required = self.kernel_required(target_relpath)
+                kernel_required = True
+                decision = {
+                    "rule_needs_kernel_test": rule_required,
+                    "model_status": "unavailable",
+                    "agreement": False,
+                    "needs_kernel_test": True,
+                    "resolution": "model_unavailable_requires_kernel",
+                }
             result = self.prepare_tests(
                 target_relpath,
                 overwrite=overwrite,
                 host_test_code=host_test_code,
                 kernel_spec=kernel_spec,
+                prepare_kernel=(run_kernel and kernel_required),
             )
+            result.kernel_requirement_decision = decision
+            if run_kernel and not kernel_required:
+                self._mark_kernel_not_applicable(result)
 
             if prepare_only:
                 return result
@@ -799,7 +901,7 @@ class OperatorTestRunner:
             if run_host:
                 self._log(f"[test] running host test for {result.algo_name} ...")
                 self.run_host_test(result)
-            if run_kernel:
+            if run_kernel and kernel_required:
                 self._log(f"[test] running kernel test for {result.algo_name} ({kernel_mode}) ...")
                 self.run_kernel_test(result, kernel_mode=kernel_mode)
             result.refresh_acceptance()

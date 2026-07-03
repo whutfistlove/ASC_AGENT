@@ -1,0 +1,10 @@
+# Concrete exceptions for symbols whose provider cannot be inferred reliably
+# from an exact header stem. Keys are bare captured symbols, independent of
+# whether the source spells _CUDA_VSTD, cuda::std, or ::cuda::std.
+- symbol: "move_if_noexcept"
+  header: "__utility/move.h"
+  status: mapped
+  note: "move_if_noexcept 与 move 由同一个基础头提供。"
+  source: ["repos/cccl/libcudacxx/include/cuda/std/__utility/move.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-07-01"

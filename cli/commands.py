@@ -4,6 +4,7 @@ command-local helpers. Shared helpers live in :mod:`cli.helpers`.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from cli.helpers import (
+    DEFAULT_CUDA_SETTINGS,
     DEFAULT_LEDGER_PATH,
     DEFAULT_SETTINGS,
     PROJECT_ROOT,
@@ -51,6 +53,11 @@ from core.analysis.migration_status import (
 )
 from core.analysis.path_mapper import expected_guard_from_relpath
 from core.analysis.test_index import scan_test_index, write_test_index_report
+from core.api_mapping.pipeline import (
+    ApiMappingOptions,
+    ApiMappingPipeline,
+    DeterministicApiMappingMockClient,
+)
 from core.common.config import Config
 from core.common.utils import save_text
 from core.llm.model_client import MockModelClient, build_model_client
@@ -62,6 +69,10 @@ from core.planning.folder_planner import (
     build_folder_plan_payload,
     refine_folder_plan_with_model,
     write_folder_plan,
+)
+from core.planning.dependency_layers import (
+    build_dependency_layers_payload,
+    write_dependency_layers,
 )
 from core.planning.package_planner import (
     build_package_plan_payload,
@@ -79,6 +90,114 @@ from core.testing.test_migrator import (
     plan_upstream_tests_for_header,
     write_upstream_test_plan_report,
 )
+
+
+def cmd_api_map(args) -> int:
+    """Run the independent, resumable CCCL CUDA -> Ascend SIMT API audit."""
+    if args.mock and args.real_ai:
+        print("error: --mock and --real-ai are mutually exclusive", file=sys.stderr)
+        return 2
+    if not args.prepare_only and not (args.mock or args.real_ai):
+        print("error: choose --mock or --real-ai explicitly (or use --prepare-only)", file=sys.stderr)
+        return 2
+
+    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    config = Config.load(settings_path, PROJECT_ROOT)
+    source_root = Path(args.source_root) if args.source_root else Path(config.cccl_repo) / "libcudacxx/include/cuda"
+    docs_root = Path(args.docs_root) if args.docs_root else PROJECT_ROOT / "docs/SIMT-API"
+    output_dir = Path(args.output_dir) if args.output_dir else config.output_dir / "api_mapping"
+    for name, value in (("source_root", source_root), ("docs_root", docs_root), ("output_dir", output_dir)):
+        if not value.is_absolute():
+            value = PROJECT_ROOT / value
+        if name == "source_root":
+            source_root = value.resolve()
+        elif name == "docs_root":
+            docs_root = value.resolve()
+        else:
+            output_dir = value.resolve()
+
+    options = ApiMappingOptions(
+        source_root=source_root,
+        docs_root=docs_root,
+        output_dir=output_dir,
+        skill_path=PROJECT_ROOT / "skills/map-cccl-simt-api/SKILL.md",
+        include=tuple(args.include or ()),
+        exclude=tuple(args.exclude or ()),
+        limit=args.limit,
+        max_source_chars=args.max_source_chars,
+        source_overlap_lines=args.source_overlap_lines,
+        max_apis_per_mapping_call=args.max_apis_per_mapping_call,
+        top_docs_per_api=args.top_docs_per_api,
+        max_docs_per_mapping_call=args.max_docs_per_mapping_call,
+        max_doc_chars=args.max_doc_chars,
+        model_retries=args.model_retries,
+        resume=not args.no_resume,
+        retry_failed=args.retry_failed,
+        fail_fast=args.fail_fast,
+        show_model_io=args.show_model_io,
+        save_model_io=not args.no_save_model_io,
+    )
+    model = DeterministicApiMappingMockClient() if args.mock or args.prepare_only else build_model_client(config)
+    model_name = "api-mapping-mock" if args.mock or args.prepare_only else config.model_name
+    try:
+        summary = ApiMappingPipeline(options, model, model_name=model_name).run(prepare_only=args.prepare_only)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print("== CCCL CUDA API -> Ascend SIMT mapping ==")
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    print(f"markdown: {output_dir / 'api_mapping.md'}")
+    print(f"json: {output_dir / 'api_mapping.json'}")
+    return 2 if summary.get("failed_files") else 0
+
+
+class _SharedScanContext:
+    """一次 CLI 调用内对源树只扫描一次，跨整批 dependency-convert 复用。
+
+    `package-migrate` / `folder-migrate` 逐头迁移时，旧实现对每个头都重扫整棵源树
+    （inventory + test_index + dep_graph，各约 1000+ 头），一个波次就是 N×3 次全树遍历。
+    这里把三类源树扫描缓存为单次，迁完一个头只**廉价地**重算 status_report——复用缓存的
+    inventory/test_index/dep_graph，仅重读增量 ``migration_state`` 并扫一遍体量小得多的目标仓，
+    使已验证依赖在批内被正确跳过。扫描是惰性的：首个头触发，后续头复用。
+    """
+
+    def __init__(self, config: Config, cccl_repo: str):
+        self._config = config
+        self._cccl_repo = cccl_repo
+        self._inventory = None
+        self._test_index = None
+        self._dep_graph = None
+        self._status_report = None
+
+    def ensure(self):
+        """返回 (inventory, test_index, dep_graph, status_report)；首次调用执行真实扫描。"""
+        if self._inventory is None:
+            cfg, repo = self._config, self._cccl_repo
+            self._inventory = scan_header_inventory(
+                repo, include_root_rel=cfg.source_repo_prefix,
+                implicit_dependency_rules=cfg.implicit_dependency_rules,
+            )
+            self._test_index = scan_test_index(
+                repo, include_root_rel=cfg.source_repo_prefix, test_root_rel=cfg.cccl_test_prefix,
+            )
+            self._dep_graph = scan_dependency_graph(
+                repo, include_root_rel=cfg.source_repo_prefix,
+                implicit_dependency_rules=cfg.implicit_dependency_rules,
+            )
+            self._status_report = _build_status_report_with_state(
+                cfg, self._inventory, self._test_index, self._dep_graph
+            )
+        return self._inventory, self._test_index, self._dep_graph, self._status_report
+
+    def refresh_status(self) -> None:
+        """迁完一个头后增量刷新 status_report（仅在已扫描过时有意义）。
+
+        复用已缓存的源树扫描，只重读 migration_state 并重扫目标仓——避免对源树再做全树扫描。
+        """
+        if self._inventory is not None:
+            self._status_report = _build_status_report_with_state(
+                self._config, self._inventory, self._test_index, self._dep_graph
+            )
 
 
 def cmd_run(args) -> int:
@@ -525,8 +644,8 @@ def cmd_inventory(args) -> int:
     settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
     config = Config.load(settings_path, PROJECT_ROOT)
     cccl_repo = _cli_cccl_repo(config, args)
-    report = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
-    report_path = write_inventory_report(report, config.output_dir, filename=args.output)
+    report = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
+    report_path = write_inventory_report(report, config.reports_output_dir, filename=args.output)
     summary = report.summary()
     print("== CCCL header inventory ==")
     print(f"cccl_repo: {report.cccl_repo}")
@@ -542,7 +661,7 @@ def cmd_test_index(args) -> int:
     config = Config.load(settings_path, PROJECT_ROOT)
     cccl_repo = _cli_cccl_repo(config, args)
     report = scan_test_index(cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix)
-    report_path = write_test_index_report(report, config.output_dir, filename=args.output)
+    report_path = write_test_index_report(report, config.reports_output_dir, filename=args.output)
     summary = report.summary()
     print("== CCCL libcudacxx test index ==")
     print(f"cccl_repo: {report.cccl_repo}")
@@ -561,9 +680,9 @@ def cmd_test_plan(args) -> int:
     settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
     config = Config.load(settings_path, PROJECT_ROOT)
     cccl_repo = _cli_cccl_repo(config, args)
-    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     test_index = scan_test_index(cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix)
-    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
     status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
     plan = plan_upstream_tests_for_header(
@@ -574,7 +693,7 @@ def cmd_test_plan(args) -> int:
         max_selected_tests=args.max_selected_tests,
     )
     output = args.output or default_test_plan_filename(args.entry_header)
-    report_path = write_upstream_test_plan_report(plan, config.output_dir, filename=output)
+    report_path = write_upstream_test_plan_report(plan, config.reports_output_dir, filename=output)
     summary = plan.summary()
     print("== Node 13 upstream test migration plan ==")
     print(f"entry_header: {plan.entry_header}")
@@ -612,6 +731,7 @@ def _write_test_migration_artifact_report(
     artifacts,
     *,
     output: str,
+    kernel_requirement: dict | None = None,
 ) -> Path:
     name = Path(output)
     if name.is_absolute() or len(name.parts) != 1:
@@ -621,13 +741,14 @@ def _write_test_migration_artifact_report(
         "host_test_code": artifacts.host_test_code,
         "kernel_spec": artifacts.kernel_spec,
         "notes": artifacts.notes,
+        "kernel_requirement": kernel_requirement,
         "upstream_test_plan": (
             artifacts.upstream_test_plan.to_dict()
             if artifacts.upstream_test_plan is not None
             else None
         ),
     }
-    path = config.output_dir / name
+    path = config.model_output_dir / name
     save_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     return path
 
@@ -646,9 +767,9 @@ def cmd_test_migrate(args) -> int:
     config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
 
     cccl_repo = _cli_cccl_repo(config, args)
-    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     test_index = scan_test_index(cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix)
-    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
     status_by_header = {entry.source_header: entry.status for entry in status_report.headers}
 
@@ -667,23 +788,54 @@ def cmd_test_migrate(args) -> int:
         return 2
     include_path = OperatorTestRunner.include_path_from_target_relpath(target_relpath)
     algo_name = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
-
-    model_client = (
-        MockModelClient(responses=[json.dumps(_mock_test_migration_payload(include_path))])
-        if args.mock
-        else build_model_client(config)
+    target_text = target_path.read_text(encoding="utf-8", errors="replace")
+    source_text = source_path.read_text(encoding="utf-8", errors="replace")
+    from core.testing.kernel_requirement import (
+        HOST_ONLY,
+        classify_kernel_requirement,
+        decide_kernel_requirement,
     )
+
+    if args.mock:
+        rule_class = classify_kernel_requirement(
+            target_relpath, source_text or target_text,
+            host_only_modules=config.kernel_host_only_modules,
+        )
+        rule_needs = rule_class != HOST_ONLY
+        mock_judgment = {
+            "classification": "kernel_applicable" if rule_needs else "host_only",
+            "needs_kernel_test": rule_needs,
+            "reason": "mock judgment agrees with deterministic classifier",
+            "evidence": [],
+        }
+        model_client = MockModelClient(responses=[
+            json.dumps(mock_judgment),
+            json.dumps(_mock_test_migration_payload(include_path)),
+        ])
+    else:
+        model_client = build_model_client(config)
+    kernel_decision = decide_kernel_requirement(
+        config=config,
+        model_client=model_client,
+        relpath=target_relpath,
+        source_text=source_text or target_text,
+        target_text=target_text,
+        host_only_modules=config.kernel_host_only_modules,
+        show_model_io=getattr(args, "show_model_io", False),
+    )
+    kernel_required = kernel_decision.needs_kernel_test
     artifacts = migrate_operator_tests(
         config,
         model_client,
         algo_name=algo_name,
         include_path=include_path,
         target_relpath=target_relpath,
-        cccl_header_text=source_path.read_text(encoding="utf-8", errors="replace"),
-        accl_header_text=target_path.read_text(encoding="utf-8", errors="replace"),
+        cccl_header_text=source_text,
+        accl_header_text=target_text,
         cccl_test_text="",
         test_index=test_index,
         entry_header=args.entry_header,
+        kernel_required=kernel_required,
         dependency_status_by_header=status_by_header,
         scaffold_inexpressible_tests=set(args.scaffold_inexpressible or []),
         verbose=not args.quiet,
@@ -691,7 +843,12 @@ def cmd_test_migrate(args) -> int:
         toolbox=None if args.mock else _maybe_build_toolbox(config),
         max_tool_rounds=config.model_max_tool_rounds,
     )
-    report_path = _write_test_migration_artifact_report(config, artifacts, output=args.output)
+    report_path = _write_test_migration_artifact_report(
+        config,
+        artifacts,
+        output=args.output,
+        kernel_requirement=kernel_decision.to_dict(),
+    )
     plan_summary = artifacts.upstream_test_plan.summary() if artifacts.upstream_test_plan else {}
     print("== Node 13 AI test migration artifacts ==")
     print(f"entry_header: {args.entry_header}")
@@ -701,6 +858,7 @@ def cmd_test_migrate(args) -> int:
     print(f"deferred_tests: {plan_summary.get('deferred_count', 0)}")
     print(f"has_host: {artifacts.has_host()}")
     print(f"has_kernel: {artifacts.has_kernel()}")
+    print(f"kernel_required: {kernel_decision.needs_kernel_test} ({kernel_decision.resolution})")
     print(f"report: {report_path}")
     return 0
 
@@ -710,8 +868,8 @@ def cmd_dep_graph(args) -> int:
     settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
     config = Config.load(settings_path, PROJECT_ROOT)
     cccl_repo = _cli_cccl_repo(config, args)
-    report = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
-    report_path = write_dependency_graph_report(report, config.output_dir, filename=args.output)
+    report = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
+    report_path = write_dependency_graph_report(report, config.reports_output_dir, filename=args.output)
     summary = report.summary()
     print("== CCCL libcudacxx dependency graph ==")
     print(f"cccl_repo: {report.cccl_repo}")
@@ -733,9 +891,9 @@ def cmd_revalidate_samples(args) -> int:
     report = build_sample_revalidation_report(
         cccl_repo,
         target_repo=config.target_repo,
-        symbol_dependency_rules=config.symbol_dependency_rules,
+        implicit_dependency_rules=config.implicit_dependency_rules,
     )
-    report_path = write_sample_revalidation_report(report, config.output_dir, filename=args.output)
+    report_path = write_sample_revalidation_report(report, config.reports_output_dir, filename=args.output)
     summary = report["summary"]
     print("== Node 6 sample revalidation ==")
     print(f"cccl_repo: {report['cccl_repo']}")
@@ -764,11 +922,11 @@ def cmd_migration_status(args) -> int:
         ledger_path=PROJECT_ROOT / "docs" / "migration_ledger.md",
         target_repo_prefix=config.target_repo_prefix,
         segment_substitutions=config.segment_substitutions,
-        symbol_dependency_rules=config.symbol_dependency_rules,
+        implicit_dependency_rules=config.implicit_dependency_rules,
         include_root_rel=config.source_repo_prefix,
         test_root_rel=config.cccl_test_prefix,
     )
-    report_path = write_migration_status_report(report, config.output_dir, filename=args.output)
+    report_path = write_migration_status_report(report, config.reports_output_dir, filename=args.output)
     summary = report.summary()
     print("== CCCL -> ACCL migration status ==")
     print(f"cccl_repo: {report.cccl_repo}")
@@ -796,7 +954,7 @@ def cmd_migration_context(args) -> int:
     config = Config.load(settings_path, PROJECT_ROOT)
     output = args.output or default_context_pack_filename(args.entry_header)
     cccl_repo = _cli_cccl_repo(config, args)
-    _inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    _inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     pack = build_migration_context_pack_from_scans(
         entry_header=args.entry_header,
         cccl_repo=cccl_repo,
@@ -805,17 +963,18 @@ def cmd_migration_context(args) -> int:
         ledger_path=DEFAULT_LEDGER_PATH,
         target_repo_prefix=config.target_repo_prefix,
         segment_substitutions=config.segment_substitutions,
-        symbol_dependency_rules=config.symbol_dependency_rules,
+        implicit_dependency_rules=config.implicit_dependency_rules,
         include_root_rel=config.source_repo_prefix,
         test_root_rel=config.cccl_test_prefix,
         state_status_map=_state_status_map(config, _inventory.header_root),
     )
-    report_path = write_migration_context_pack(pack, config.output_dir, filename=output)
+    report_path = write_migration_context_pack(pack, config.reports_output_dir, filename=output)
     print("== AI migration context pack ==")
     print(f"entry_header: {pack['entry_header']}")
     print(f"include: {pack['include']}")
     print(f"dependency_closure_size: {pack['dependency_closure']['closure_size']}")
     print(f"mapped_upstream_tests: {len(pack['mapped_upstream_tests'])}")
+    print(f"migrated_accl_dependencies: {len(pack['migrated_accl_dependencies'])}")
     print(f"nearby_accl_sibling_headers: {len(pack['nearby_accl_sibling_headers'])}")
     print(f"relevant_validated_examples: {len(pack['relevant_validated_examples'])}")
     print(f"target_counterpart_exists: {pack['existing_accl_counterpart']['exists']}")
@@ -833,9 +992,9 @@ def cmd_folder_plan(args) -> int:
     config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
     cccl_repo = _cli_cccl_repo(config, args)
 
-    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     test_index = scan_test_index(cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix)
-    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
+    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
     status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
     options = FolderPlanOptions(
         first_batch_size=args.first_batch_size,
@@ -879,7 +1038,7 @@ def cmd_folder_plan(args) -> int:
 
     json_path, md_path = write_folder_plan(
         plan,
-        config.output_dir,
+        config.plans_output_dir,
         json_name=args.output_json,
         md_name=args.output_md,
     )
@@ -972,36 +1131,22 @@ def _safe_report_name(header: str) -> str:
     return "dependency_convert_" + re.sub(r"[^0-9A-Za-z_.-]+", "__", header).strip("_") + ".json"
 
 
-def _folder_dependency_args(args, header: str, *, cccl_repo: str) -> argparse.Namespace:
-    return argparse.Namespace(
-        settings=args.settings,
-        entry_header=header,
-        cccl_repo=cccl_repo,
-        plan_only=args.plan_only,
-        mock=args.mock,
-        real_ai=args.real_ai,
-        no_write_target=args.no_write_target,
-        output=_safe_report_name(header),
-        quiet=args.quiet,
-        show_model_io=args.show_model_io,
-        with_tests=args.with_tests,
-        host_only=args.host_only,
-        kernel_only=args.kernel_only,
-        kernel_mode=args.kernel_mode,
-        prepare_tests_only=args.prepare_tests_only,
-        overwrite_tests=args.overwrite_tests,
-        kernel_fast=args.kernel_fast,
-        kernel_timeout=args.kernel_timeout,
-        kernel_print_samples=args.kernel_print_samples,
-        test_dry_run=args.test_dry_run,
-        test_feedback_to_model=args.test_feedback_to_model,
-        test_feedback_skill=args.test_feedback_skill,
-        max_fix_rounds=args.max_fix_rounds,
-        continue_on_test_failure=args.continue_on_test_failure,
-        defer_dependents_on_failure=args.defer_dependents_on_failure,
-        verify_includes=args.verify_includes,
-        verify_includes_strict=args.verify_includes_strict,
-    )
+def _folder_dependency_args(args, header: str, *, cccl_repo: str, scan_context=None) -> argparse.Namespace:
+    """Build a per-header dependency-convert args namespace.
+
+    Clone the caller's parsed args and override only the per-header fields. ``copy.copy``
+    keeps every flag the caller already has (test selection, fix rounds, defer/verify, ...)
+    so new dependency-convert flags don't need to be threaded by hand here. ``scan_context``
+    lets the whole batch reuse a single source-tree scan instead of re-scanning per header.
+    """
+    dep = copy.copy(args)
+    dep.entry_header = header
+    dep.cccl_repo = cccl_repo
+    dep.output = _safe_report_name(header)
+    dep._scan_context = scan_context
+    if not hasattr(dep, "plan_only"):
+        dep.plan_only = False
+    return dep
 
 
 def cmd_folder_migrate(args) -> int:
@@ -1055,11 +1200,14 @@ def cmd_folder_migrate(args) -> int:
     print(f"headers: {len(headers)}")
     if external_issues:
         print(f"external_dependency_issues_approved: {len(external_issues)}")
+    # 整批共享一次源树扫描；每迁完一个头增量刷新 status（见 _SharedScanContext）。
+    scan_context = _SharedScanContext(config, cccl_repo)
     failed: list[str] = []
     for idx, header in enumerate(headers, start=1):
         print(f"\n---- [{idx}/{len(headers)}] {header} ----")
-        dep_args = _folder_dependency_args(args, header, cccl_repo=cccl_repo)
+        dep_args = _folder_dependency_args(args, header, cccl_repo=cccl_repo, scan_context=scan_context)
         code = cmd_dependency_convert(dep_args)
+        scan_context.refresh_status()
         if code != 0:
             failed.append(header)
             if not args.continue_on_error:
@@ -1073,7 +1221,13 @@ def cmd_folder_migrate(args) -> int:
 
 
 def cmd_dependency_convert(args) -> int:
-    """Run the Node 12 dependency-aware header migration orchestration for one entry."""
+    """Run the Node 12 dependency-aware header migration orchestration for one entry.
+
+    Thin wrapper: validate mode, load config, then either reuse an injected shared scan
+    context (set by package/folder-migrate so the whole batch scans the source tree once)
+    or scan once for this single entry. The post-scan orchestration lives in
+    :func:`run_dependency_convert` so the scans can be threaded in instead of re-run.
+    """
     settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
     if args.mock and args.real_ai:
         print("error: --mock and --real-ai are mutually exclusive", file=sys.stderr)
@@ -1084,13 +1238,43 @@ def cmd_dependency_convert(args) -> int:
 
     overrides = {"model": {"provider": "mock"}} if args.mock or args.plan_only else None
     config = Config.load(settings_path, PROJECT_ROOT, overrides=overrides)
-    cccl_repo = _cli_cccl_repo(config, args)
 
-    inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
-    test_index = scan_test_index(cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix)
-    dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules)
-    status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
+    scan_context = getattr(args, "_scan_context", None)
+    if scan_context is not None:
+        inventory, test_index, dep_graph, status_report = scan_context.ensure()
+    else:
+        cccl_repo = _cli_cccl_repo(config, args)
+        inventory = scan_header_inventory(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
+        test_index = scan_test_index(cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix)
+        dep_graph = scan_dependency_graph(cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules)
+        status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
 
+    return run_dependency_convert(
+        args,
+        config,
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status_report,
+    )
+
+
+def run_dependency_convert(
+    args,
+    config: Config,
+    *,
+    inventory,
+    test_index,
+    dep_graph,
+    status_report,
+) -> int:
+    """Node 12 dependency-aware migration core, with the source-tree scans injected.
+
+    No scanning happens here. ``cmd_dependency_convert`` scans once (or reuses a shared
+    context); package/folder-migrate scan the source tree once outside their loop and
+    reuse the same inventory/test_index/dep_graph across every header, refreshing only the
+    incremental ``status_report`` between headers.
+    """
     model_client = MockModelClient(responses=[]) if args.plan_only else (
         MockModelClient() if args.mock else build_model_client(config)
     )
@@ -1184,13 +1368,13 @@ def _split_csv(value) -> list[str]:
 def _build_package_plan(config: Config, cccl_repo: str, manual_marks: set[str]) -> dict:
     """Scan the whole CCCL package and build the dependency-wave plan (no model)."""
     inventory = scan_header_inventory(
-        cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules
+        cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules
     )
     test_index = scan_test_index(
         cccl_repo, include_root_rel=config.source_repo_prefix, test_root_rel=config.cccl_test_prefix
     )
     dep_graph = scan_dependency_graph(
-        cccl_repo, include_root_rel=config.source_repo_prefix, symbol_dependency_rules=config.symbol_dependency_rules
+        cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules
     )
     status_report = _build_status_report_with_state(config, inventory, test_index, dep_graph)
     return build_package_plan_payload(
@@ -1203,14 +1387,21 @@ def _build_package_plan(config: Config, cccl_repo: str, manual_marks: set[str]) 
     )
 
 
+def _package_settings_path(args) -> Path:
+    """显式 --settings 优先；否则 --all-layers 用 cuda 层映射(整树)，默认用 std 层映射。"""
+    if args.settings:
+        return Path(args.settings)
+    return DEFAULT_CUDA_SETTINGS if getattr(args, "all_layers", False) else DEFAULT_SETTINGS
+
+
 def cmd_package_plan(args) -> int:
     """Build/refresh the whole-package dependency-wave migration plan (no model)."""
-    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    settings_path = _package_settings_path(args)
     config = Config.load(settings_path, PROJECT_ROOT)
     cccl_repo = _cli_cccl_repo(config, args)
 
     # 持久化的人工标记：先读既有计划，再叠加本次 --mark / --unmark。
-    marks = read_manual_marks(config.output_dir / args.output_json)
+    marks = read_manual_marks(config.plans_output_dir / args.output_json)
     for header in _split_csv(args.mark):
         marks.add(header)
     for header in _split_csv(args.unmark):
@@ -1218,7 +1409,7 @@ def cmd_package_plan(args) -> int:
 
     plan = _build_package_plan(config, cccl_repo, marks)
     json_path, md_path = write_package_plan(
-        plan, config.output_dir, json_name=args.output_json, md_name=args.output_md
+        plan, config.plans_output_dir, json_name=args.output_json, md_name=args.output_md
     )
     summary = plan["summary"]
     print("== Package migration planning (dependency waves) ==")
@@ -1229,6 +1420,7 @@ def cmd_package_plan(args) -> int:
     print(f"pending: {summary['pending']}")
     print(f"deferred: {summary['deferred']}")
     print(f"blocked: {summary['blocked']}")
+    print(f"host_only (kernel not needed): {summary.get('host_only_header_count', 0)}")
     print(f"batches: {summary['batch_count']} (cycles: {summary['cycle_count']})")
     for batch in plan["batches"][:10]:
         flag = " [cycle]" if batch["contains_cycle"] else ""
@@ -1241,6 +1433,41 @@ def cmd_package_plan(args) -> int:
     return 0
 
 
+def cmd_dep_layers(args) -> int:
+    """整包严格依赖分层：Layer 0 = 库内零依赖头，逐层递进；每个头列出全部依赖（库内 + 系统/外部）。"""
+    settings_path = _package_settings_path(args)
+    config = Config.load(settings_path, PROJECT_ROOT)
+    cccl_repo = _cli_cccl_repo(config, args)
+    inventory = scan_header_inventory(
+        cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules
+    )
+    dep_graph = scan_dependency_graph(
+        cccl_repo, include_root_rel=config.source_repo_prefix, implicit_dependency_rules=config.implicit_dependency_rules
+    )
+    payload = build_dependency_layers_payload(inventory=inventory, dep_graph=dep_graph)
+    json_path, md_path = write_dependency_layers(
+        payload, config.plans_output_dir, json_name=args.output_json, md_name=args.output_md
+    )
+    summary = payload["summary"]
+    print("== Package dependency layers (strict topological) ==")
+    print(f"cccl_repo: {payload['cccl_repo']}")
+    print(f"header_root: {payload['header_root']}")
+    print(f"namespace: {payload['namespace']}")
+    print(f"total_headers: {summary['total_headers']}")
+    print(f"layers: {summary['layer_count']} (max_layer={summary['max_layer']})")
+    print(f"layer-0 (zero in-package deps): {summary['zero_in_package_dependency_headers']}")
+    print(f"cycles: {summary['cycle_count']}")
+    print(f"distinct external deps: {summary['distinct_external_dependency_count']}")
+    for layer in payload["layers"][:10]:
+        flag = " [cycle]" if layer["contains_cycle"] else ""
+        print(f"  layer-{layer['layer']}: {layer['header_count']} headers{flag}")
+    if summary["layer_count"] > 10:
+        print(f"  ... +{summary['layer_count'] - 10} more layers")
+    print(f"json: {json_path}")
+    print(f"markdown: {md_path}")
+    return 0
+
+
 def cmd_package_migrate(args) -> int:
     """Execute an approved batch from a package plan, then refresh the ledger."""
     if args.mock and args.real_ai:
@@ -1249,7 +1476,9 @@ def cmd_package_migrate(args) -> int:
     if not args.plan_only and not (args.mock or args.real_ai):
         print("error: choose --plan-only, --mock, or --real-ai explicitly", file=sys.stderr)
         return 2
-    settings_path = Path(args.settings) if args.settings else DEFAULT_SETTINGS
+    settings_path = _package_settings_path(args)
+    # 让派发给 dependency-convert 的子命令复用同一层映射（整树 = cuda 设置）。
+    args.settings = str(settings_path)
     config = Config.load(settings_path, PROJECT_ROOT)
     cccl_repo = _cli_cccl_repo(config, args)
     try:
@@ -1280,11 +1509,14 @@ def cmd_package_migrate(args) -> int:
     print(f"batch: {args.batch}")
     print(f"cccl_repo: {cccl_repo}")
     print(f"headers: {len(headers)}")
+    # 整批共享一次源树扫描；每迁完一个头增量刷新 status（见 _SharedScanContext）。
+    scan_context = _SharedScanContext(config, cccl_repo)
     failed: list[str] = []
     for idx, header in enumerate(headers, start=1):
         print(f"\n---- [{idx}/{len(headers)}] {header} ----")
-        dep_args = _folder_dependency_args(args, header, cccl_repo=cccl_repo)
+        dep_args = _folder_dependency_args(args, header, cccl_repo=cccl_repo, scan_context=scan_context)
         code = cmd_dependency_convert(dep_args)
+        scan_context.refresh_status()
         if code != 0:
             failed.append(header)
             if not args.continue_on_error:

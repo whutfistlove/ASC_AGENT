@@ -155,6 +155,10 @@ host 测试应该满足：
 
 ## 6. Kernel 测试
 
+是否生成和执行 Kernel 测试由两路独立判断共同决定：确定性源码规则与
+`skills/judge_kernel_requirement.md` 驱动的模型审查。只有两路都判定为 `host_only` 才跳过；
+分歧、模型不可用或模型输出不合法时一律按需要 Kernel 处理。完整判定会写入模型输出目录并随测试结果返回。
+
 kernel 测试生成在：
 
 ```text
@@ -260,13 +264,13 @@ expected == expected0
 host 测试日志：
 
 ```text
-outputs/host_test_<algo>.log
+outputs/tests/host_test_<algo>.log
 ```
 
 kernel 包装层日志：
 
 ```text
-outputs/kernel_test_<algo>.log
+outputs/tests/kernel_test_<algo>.log
 ```
 
 `main.cpp` 中用户程序的实际 stdout 经常会被 cannsim 重定向到生成的仿真目录，例如：

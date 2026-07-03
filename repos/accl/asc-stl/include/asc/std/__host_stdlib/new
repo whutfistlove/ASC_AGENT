@@ -1,0 +1,17 @@
+#ifndef ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_NEW_
+#define ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_NEW_
+
+#include "asc/std/__config"
+
+#if defined(__CCE__)
+#define ASC_DEVICE_CODE
+#else
+#include <new>
+#endif
+
+// [MIGRATION NOTE] The original CCCL header conditionally included the host's
+// <new> via !_CCCL_COMPILER(NVRTC). ASC-STL does not have _CCCL_COMPILER, so we
+// include <new> directly on the host side. On the device side (__CCE__), <new>
+// is not available.
+
+#endif // ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_NEW_

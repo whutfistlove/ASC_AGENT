@@ -75,7 +75,7 @@ def test_dependency_convert_plan_only_writes_report_without_model(tmp_path, monk
         )
     )
 
-    report_path = project / "outputs" / "fixture_dependency_plan.json"
+    report_path = project / "outputs" / "reports" / "fixture_dependency_plan.json"
     assert code == 0
     assert report_path.exists()
     data = json.loads(report_path.read_text(encoding="utf-8"))
@@ -98,7 +98,7 @@ def test_dependency_convert_uses_config_default_cccl_repo(tmp_path, monkeypatch)
         )
     )
 
-    report_path = project / "outputs" / "fixture_dependency_plan_default_repo.json"
+    report_path = project / "outputs" / "reports" / "fixture_dependency_plan_default_repo.json"
     assert code == 0
     data = json.loads(report_path.read_text(encoding="utf-8"))
     assert data["entry_header"] == "__fixture/a.h"

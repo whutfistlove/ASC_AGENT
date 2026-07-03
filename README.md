@@ -16,11 +16,16 @@ AscendC kernel 仿真侧验证结果。
 - 扫描一个源侧文件夹，按依赖、复杂度、测试映射和迁移状态生成首批/后续迁移建议，人工确认后再执行。
 - 对整库做依赖分析（不调用模型），输出严格按依赖波次分批的迁移台账；迁移成功自动标记，可增量续跑。
 - 将已验证产物晋升为 `examples/` 金标准示例，并维护 manifest 元数据索引。
+- 独立逐文件审计 `include/cuda` 全树实现所引用的外部 CUDA/NV 平台 API（排除随闭包迁移的 `cuda::`/`cuda::std::` 包内依赖），并映射到本地晟腾 SIMT 文档。
 
 ## 快速命令
 
 > 调用模型的命令示例默认带 `--show-model-io`，用于实时查看完整模型交互；不想刷屏时去掉即可。
 > 没有 CANN/cannsim 的机器可以加 `--host-only`；想更快检查 kernel 可以加 `--kernel-fast`。
+> 闭包/批次迁移示例默认带 `--test-feedback-to-model --defer-dependents-on-failure`：测试失败先回灌模型
+> 修复；修复后仍失败只**延期失败头的下游**、独立分支继续，**不再「失败即停」整条闭包**。想严格失败即停
+> 就去掉 `--defer-dependents-on-failure`。此外测试迁移会在生成 host 测试后做一次 g++ 语法自检、失败自动
+> 回灌模型修复（`tests.host_syntax_repair_rounds`，默认 2 轮），把漏分号这类编译错挡在源头。
 
 ```bash
 # 离线自检，不需要 API key 或 CANN。
@@ -40,21 +45,32 @@ python3 main.py make-example clamp sort3 quad_fanout
 
 # 扫描一个源侧文件夹，先生成首批/后续迁移建议，确认后再执行首批。
 python3 main.py folder-plan --source-dir std/__algorithm --cccl-repo repos/cccl --real-ai --show-model-io
-python3 main.py folder-migrate --plan outputs/folder_migration_plan.json --batch first --approve \
-    --real-ai --with-tests --test-feedback-to-model --show-model-io
+python3 main.py folder-migrate --plan outputs/plans/folder_migration_plan.json --batch first --approve \
+    --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure --show-model-io
 
 # 对整库做依赖分析并按依赖波次分批（不调用模型），再按波次顺序迁移、成功自动标记。
 python3 main.py package-plan --cccl-repo repos/cccl
-python3 main.py package-migrate --plan outputs/package_migration_plan.json --batch next --approve \
-    --real-ai --with-tests --test-feedback-to-model --show-model-io
+python3 main.py package-migrate --plan outputs/plans/package_migration_plan.json --batch next --approve \
+    --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure --show-model-io
+
+# 包括扩展
+python3 main.py package-plan --all-layers --cccl-repo repos/cccl
+python3 main.py package-migrate --plan outputs/plans/package_migration_plan.json --batch next --approve \
+    --all-layers --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure
+
 
 # 按依赖闭包迁移一个跨头依赖的算子（叶子优先；先看计划加 --plan-only，真实迁移加 --real-ai）。
 # adjacent_find 为真实 libcudacxx 闭包样例：adjacent_find → comp → integral_constant。
 python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl \
-    --real-ai --with-tests --test-feedback-to-model --show-model-io
+    --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure --show-model-io
 
 # 只看头文件依赖图与迁移顺序（include 依赖 + reference 声明的符号隐含依赖）。
 python3 main.py dep-graph --cccl-repo repos/cccl
+
+# 独立 API 映射管线：先离线核对全量源文件/文档清单，再小批真实分析，最后全量可续跑。
+python3 main.py api-map --prepare-only
+python3 main.py api-map --include '__bit/bit_reverse.h' --real-ai --show-model-io
+python3 main.py api-map --real-ai --show-model-io
 ```
 
 ## 目录速览
@@ -69,6 +85,7 @@ ASC_agent
 │   ├── llm/                模型客户端 / 取证工具 / best-of-N
 │   ├── knowledge/          可审计知识库与 few-shot 检索
 │   ├── analysis/           清单 / 依赖图 / 测试索引 / 迁移状态与上下文
+│   ├── api_mapping/        独立 CCCL CUDA API 提取、SIMT 文档检索、映射校验与汇总
 │   ├── planning/           文件夹级迁移规划 / 整库分波次规划（package_planner）
 │   ├── migration/          头改写 / 修复 / 示例晋升
 │   ├── testing/            测试迁移 / 执行 / 脚手架 / 环境自愈 / 自包含校验
@@ -80,8 +97,12 @@ ASC_agent
 ├── repos/accl              ACCL 目标仓与生成测试
 ├── tests/                  离线 pytest 单测
 ├── docs/                   更完整的指南、结构说明与路线图
-└── outputs/                模型请求/响应、生成产物、host/kernel 测试日志
+└── outputs/                按产物类型分二级目录：model/ fix/ tests/ reports/ plans/ state/ repo/
 ```
+
+独立 API 映射管线的完整用法、覆盖口径、续跑规则和产物说明见
+[docs/api-mapping.md](docs/api-mapping.md)。主结果为 `outputs/api_mapping/api_mapping.md`；默认按源文件、
+文档、skill 和模型指纹续跑，大型生成头会带重叠地完整分片，不会静默截断。
 
 ## 核心流程
 
@@ -98,32 +119,35 @@ CCCL 头文件
 
 关键输出：
 
-- `outputs/model_request.md`：头文件迁移时发给模型的请求。
-- `outputs/rewritten_target.h`：模型生成的头文件初稿。
-- `outputs/rewrite_result.json`：本轮迁移结果。
-- `outputs/host_test_<op>.log` / `outputs/kernel_test_<op>.log`：测试日志。
-- `outputs/folder_migration_plan.json` / `.md`：文件夹级首批与后续迁移建议。
-- `outputs/dependency_convert_report.json`：依赖闭包迁移报告。
-- `outputs/migration_state.json`：已验证迁移状态，用于闭包增量跳过；只记录 semantic pass，不记录 smoke。
+- `outputs/model/model_request.md`：头文件迁移时发给模型的请求。
+- `outputs/model/rewritten_target.h`：模型生成的头文件初稿。
+- `outputs/model/rewrite_result.json`：本轮迁移结果。
+- `outputs/tests/host_test_<op>.log` / `outputs/tests/kernel_test_<op>.log`：测试日志。
+- `outputs/plans/folder_migration_plan.json` / `.md`：文件夹级首批与后续迁移建议。
+- `outputs/reports/dependency_convert_report.json`：依赖闭包迁移报告。
+- `outputs/state/migration_state.json`：已验证迁移状态，用于闭包增量跳过；只记录 semantic pass，不记录 smoke。
+
+> outputs/ 下按产物类型分二级目录：`model/`（模型初稿交互）、`fix/`（修复迭代 + post_hook_baseline）、
+> `tests/`（host/kernel 日志）、`reports/`（inventory/dep_graph/status/context/batch/dependency_convert）、
+> `plans/`（folder/package 迁移计划）、`state/`（migration_state）、`repo/`（git/clang_format 提交校验日志）。
 
 ## reference/ 怎么参与迁移
 
-`reference/` 不是整库塞进 prompt，而是按当前任务命中项注入：
+`reference/manifest.yaml` 是知识源索引；知识库不整库塞进 prompt，而是分层、按需使用：
 
-- `reference/symbol_mapping.yaml`：头文件层符号/宏/命名空间/include/header guard 映射，例如
-  `_CCCL_API -> _ASC_AICORE_FN`、`cuda::std -> asc::std`；其中 `symbol_dependencies`
-  声明源码符号隐含依赖，例如 `_CUDA_VSTD::move -> __utility/move.h`，用于依赖图和迁移闭包。
-- `reference/grammar_rules.yaml`：语法改写规则，例如 `__device__`、`__shared__`、`assert`、`printf`。
-- `reference/constraint_rules.yaml`：受限或不支持特性，例如 `double`、`complex`、texture、cooperative groups。
+- `reference/mappings/`：具体映射事实。宏、命名空间、include、路径段分别存放；runtime/device API
+  继续位于 `reference/api-mapping/`，由 manifest 注册但不默认整表注入。
+- `reference/rules/`：可泛化规则。grammar、constraint、隐含依赖和迁移策略不再与具体符号混写。
+- `rules/implicit_dependencies.yaml` 用限定符号正则 + 源树头文件索引推导提供者，例如自动得到
+  `move -> __utility/move.h`、`forward -> __utility/forward.h`；无需枚举每个命名空间拼写。
 
 接入点：
 
 - 头文件迁移：`core/migration/pipeline.py` 调用 `load_knowledge_base(...).render_block(source_text)`，
-  并把结果写进 `outputs/model_request.md`。
+  并把结果写进 `outputs/model/model_request.md`。
 - 测试迁移：`core/testing/test_migrator.py` 用已迁移头和 CCCL 测试内容查询知识库，再拼进测试迁移请求。
-- 策略来源：`Config.load()` 会从 `reference/symbol_mapping.yaml` 读取
-  `segment_substitutions` / `migration_policy` / `symbol_dependencies` 并覆盖进运行时 config；
-  `settings.yaml` 不再维护这三类迁移策略。
+- 策略来源：`Config.load()` 通过 manifest 读取 `segment_substitutions`、`migration_policy` 和
+  `implicit_dependency` 规则并覆盖运行时 config；`settings.yaml` 不重复维护这些策略。
 
 `reference/api-mapping/` 当前主要作为 runtime/device API 层的资料储备与方法论参考，还没有默认注入
 ASC-STL 头文件迁移路径。
@@ -149,8 +173,35 @@ host 测试是每个算子独立生成的完整 C++ 文件。kernel 测试由固
 会使用内置语义 fallback；未知形状只做 include/build/launch 冒烟，不猜测 `op(x, y)` 调用，也不计为语义通过。
 测试结果会显式区分 `semantic_passed` 与 `smoke_passed`；`migration_state.json` 只接受语义通过。
 
+### 是否需要 kernel 侧测试
+
+源库里有大量头只含**编译期构造**（类型特征 `__type_traits/*`、概念 `__concepts/*`、前向声明 `__fwd/*`、
+host-stdlib 转发 `__host_stdlib/*`、宏等），没有可在设备侧运行的算子。对它们跑 kernel（cannsim，
+单次数分钟）既无意义又慢。`core/testing/kernel_requirement.py` 先用**确定性规则**判定，再通过
+`skills/judge_kernel_requirement.md` 调用模型独立判定每个头需不需要 kernel：
+
+- 模块 ∈ `{__type_traits, __host_stdlib, __fwd, __concepts}`（可由 `tests.kernel_host_only_modules` 覆盖）→ host-only；
+- 否则含设备可调用函数（`_CCCL_API` 等修饰后跟 `name(`）→ 需要 kernel（**优先级高于下面的编译期信号**，
+  以免 `__functional/operations.h` 这种既有 `plus` 设备算子又含 CTAD 指引的头被误判）；
+- 否则为纯编译期内容——CTAD 推导指引（`__allow_ctad` / `_CTAD_SUPPORTED_FOR_TYPE`，如 `__utility/ctad_support.h`）、
+  纯宏头、trait/概念——→ host-only；其余 → unknown（保守，照常尝试 kernel）。
+
+规则与模型都以 **CCCL 源头**为主要事实源，目标头只作辅助证据。只有两者都判为 host-only 才会
+**跳过 kernel**并标记为 `not_applicable`；只要两者分歧，或模型不可用、超时、输出不合法，统一保守地要求
+kernel 测试。判定请求、模型原文和最终共识写入 `outputs/model/kernel_requirement_*`，测试结果中也保存完整判定。
+`--force-kernel` 仍可强制运行。`package-plan` 的 `needs_kernel_test` 是不调用模型的规则预判；实际生成和执行测试时
+会再完成上述双重判定。
+
 测试失败会先由 `core/testing/failure_triage.py` 分成环境类和代码类：环境类直接报告或跳过修复循环，代码类才回灌模型。
 `core/testing/build_env.py` 会在测试前处理部分常见环境问题，例如过期 CMake 缓存和 CANN 工具 PATH。
+
+### host 测试生成期编译自检（根本性兜底）
+
+测试迁移生成 host 测试后，会立刻用 `host_syntax_check`（g++ -fsyntax-only）做一次**强制编译自检**；
+若诊断指向测试本身（而非被包含的头），把代码 + 编译器诊断回灌模型修复，最多
+`tests.host_syntax_repair_rounds` 轮（默认 2；0=只检不修；<0=关闭）。这把「漏分号、声明位置错」这类
+编译错挡在**生成阶段**，而不是拖到 cmake/cannsim 才暴露——例如 `ctad_support` 的 CTAD 推导指引漏分号即此类。
+无 g++ 或 mock/离线（无 toolbox）时安全跳过；诊断指向被包含头（依赖缺口）时不浪费模型调用，交给下游测试反馈循环。
 
 ## 模型工具
 
@@ -193,8 +244,8 @@ python3 main.py folder-plan --source-dir std/__algorithm --cccl-repo repos/cccl 
 
 也兼容绝对路径、`cuda/std/__algorithm`、`libcudacxx/include/cuda/std/__algorithm` 和旧的 `__algorithm` 写法。
 
-输出默认写到 `outputs/folder_migration_plan.json`、`outputs/folder_migration_plan_details.json`
-和 `outputs/folder_migration_plan.md`。其中 `folder_migration_plan.json` 是执行用轻量计划，
+输出默认写到 `outputs/plans/folder_migration_plan.json`、`outputs/plans/folder_migration_plan_details.json`
+和 `outputs/plans/folder_migration_plan.md`。其中 `folder_migration_plan.json` 是执行用轻量计划，
 保留跨包依赖预览和计数；完整依赖闭包与全量外部依赖明细在 details JSON。
 计划会扫描整个 CCCL `cuda/std` 依赖图和 ACCL `asc/std` 目标头：
 
@@ -207,15 +258,15 @@ python3 main.py folder-plan --source-dir std/__algorithm --cccl-repo repos/cccl 
 JSON 默认 `approved: false`，所以执行端不会因为模型建议就自动迁移；人工审阅后再运行：
 
 ```bash
-python3 main.py folder-migrate --plan outputs/folder_migration_plan.json --batch first --approve \
-    --real-ai --with-tests --test-feedback-to-model --host-only
+python3 main.py folder-migrate --plan outputs/plans/folder_migration_plan.json --batch first --approve \
+    --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure --host-only
 ```
 
 如果你明确接受本批次顺带迁移 source-dir 范围外的未验证/缺失依赖，再额外加：
 
 ```bash
-python3 main.py folder-migrate --plan outputs/folder_migration_plan.json --batch __algorithm/foo.h \
-    --approve --real-ai --allow-external-dependencies --with-tests --test-feedback-to-model
+python3 main.py folder-migrate --plan outputs/plans/folder_migration_plan.json --batch __algorithm/foo.h \
+    --approve --real-ai --allow-external-dependencies --with-tests --test-feedback-to-model --defer-dependents-on-failure
 ```
 
 常用批次：
@@ -239,16 +290,16 @@ python3 main.py folder-migrate --plan outputs/folder_migration_plan.json --batch
 计划：batch-1 是叶子，batch-N 只依赖更早批次，因此按批次顺序喂给模型时，每个头的依赖都已就绪。
 
 报告是一个**可持久化、可增量**的台账：每当头文件迁移成功（host/kernel 语义测试通过，记录在
-`outputs/migration_state.json`）就自动标记为已完成；重跑 `package-plan` 时已完成的头会从波次中
+`outputs/state/migration_state.json`）就自动标记为已完成；重跑 `package-plan` 时已完成的头会从波次中
 剔除，其下游自动提前解锁。强连通分量（环）成员会被放进同一批次共同迁移并标 `contains_cycle`。
 
 ```bash
-# 1) 生成/刷新整库分波次计划（无模型；写 outputs/package_migration_plan.{json,md}）。
+# 1) 生成/刷新整库分波次计划（无模型；写 outputs/plans/package_migration_plan.{json,md}）。
 python3 main.py package-plan --cccl-repo repos/cccl
 
 # 2) 人工审阅 markdown 后，按波次推进。--batch next = 首个仍有未完成头的波次。
-python3 main.py package-migrate --plan outputs/package_migration_plan.json --batch next --approve \
-    --real-ai --with-tests --test-feedback-to-model --show-model-io
+python3 main.py package-migrate --plan outputs/plans/package_migration_plan.json --batch next --approve \
+    --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure --show-model-io
 
 # 3) 迁移成功的头会自动回写标记；重跑 package-plan 即可看到 completed 增长、波次收缩。
 python3 main.py package-plan --cccl-repo repos/cccl
@@ -262,22 +313,41 @@ python3 main.py package-plan --unmark __numeric/gcd.h
 `package-migrate` 对每个头复用 `dependency-convert`，因此 leaf-first 闭包、`--with-tests`、
 `--test-feedback-to-model`、`--verify-includes[-strict]`、`--defer-dependents-on-failure` 等能力全部生效；
 批次结束后会自动刷新台账（把新通过的头标记为已完成）。先 `--plan-only` 可只看每个头的闭包计划、不调模型。
-命中 `migration_policy` 的延期上游/伞头不进波次，单列在计划的 deferred 区。`--settings config/settings.cuda.yaml`
-下同样可对扩展层整包规划。
+命中 `migration_policy` 的延期上游/伞头不进波次，单列在计划的 deferred 区。
+
+### 整树（含 cuda 扩展层 + 跨层依赖）
+
+默认 `package-plan` 只分析 `cuda/std` 标准库层。`cuda/` 扩展层自身有依赖，且**大量依赖 `cuda/std`**
+（跨层）。加 `--all-layers` 即对整个 `cuda` 树做依赖分析：标准库层 + 扩展层 + 两层之间的依赖一起
+分波次，扩展头所依赖的 `cuda/std` 头会被排到更早批次。它等价于 `--settings config/settings.cuda.yaml`
+（前缀映射 `cuda -> asc`），并对两层做了分层归一：`cuda/std` 下的延期上游（`__cccl/`、`detail/` 等）
+仍正确进入 deferred 区，std 层已验证进度也会被整树计划识别为已完成。
+
+```bash
+# 整树规划：cuda/std + cuda 扩展层 + 跨层依赖一起分波次。
+python3 main.py package-plan --all-layers --cccl-repo repos/cccl
+
+# 整树迁移：按波次推进（须与 package-plan 用同一 --all-layers，保证层映射一致）。
+python3 main.py package-migrate --plan outputs/plans/package_migration_plan.json --batch next --approve \
+    --all-layers --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure
+```
+
+> 整树头键以 `cuda` 命名空间为根：`cuda/std` 头记作 `std/__algorithm/...`，扩展头记作 `__bit/...`；
+> 目标路径分别落到 `asc/std/...` 与 `asc/...`。`package-plan` 与 `package-migrate` 必须用一致的层选项。
 
 ## 依赖闭包迁移
 
-`dependency-convert` 用于迁移跨头依赖算子。它从入口头解析 `cuda/std` 内的仓内 include，并结合
-`reference/symbol_mapping.yaml` 的 `symbol_dependencies` 识别源码符号隐含依赖。例如源头只写了
-`_CUDA_VSTD::move`、没有显式 include `cuda/std/__utility/move.h`，依赖图仍会把 `__utility/move.h`
-放进闭包并排在使用者之前迁移。闭包按叶子优先顺序迁移，并复用已验证且源哈希未变的依赖。
+`dependency-convert` 用于迁移跨头依赖算子。它从入口头解析仓内 include，并结合
+`reference/rules/implicit_dependencies.yaml` 的泛化规则识别源码限定符号：捕获符号名后，根据真实
+源树头文件索引解析提供者。即使源码只写 `_CUDA_VSTD::move`、没有显式 include，依赖图仍会把
+`__utility/move.h` 放进闭包；同一规则也覆盖 `forward` 等新符号。
 
 ```bash
 # 先看计划（不调模型、不写盘）——adjacent_find 为真实 libcudacxx 闭包样例。
 python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl --plan-only
 # 真实迁移整条闭包并写入 ACCL（叶子优先序：integral_constant → comp → adjacent_find），失败先回灌模型修复。
 python3 main.py dependency-convert --entry-header __algorithm/adjacent_find.h --cccl-repo repos/cccl \
-    --real-ai --with-tests --test-feedback-to-model --show-model-io
+    --real-ai --with-tests --test-feedback-to-model --defer-dependents-on-failure --show-model-io
 
 # 一条命令：按依赖闭包 leaf-first 改写，并紧跟每个算子跑 host(+kernel) 测试。
 # 默认先把代码类测试失败回灌模型修复；修复后仍失败时，--defer-dependents-on-failure
@@ -382,16 +452,15 @@ python3 main.py --settings config/settings.cuda.yaml folder-plan \
 ```
 
 > 注意：扩展头的闭包通常较大（`cuda::` 扩展大量依赖 `cuda::std`），整条真实迁移开销高；
-> 建议先 `--plan-only` 审阅闭包，再决定批次。此外 `reference/symbol_mapping.yaml` 的符号映射
-> 主要面向 `cuda::std`，扩展层 `cuda::`（非 std）符号可能需要补充规则后迁移质量才稳。
+> 建议先 `--plan-only` 审阅闭包，再决定批次。manifest 已分别注册 `cuda::std` 与 `cuda::`
+> 限定调用规则；无法按头文件命名约定解析的少数例外仍应作为具体 provider 映射补充。
 
 ## 配置与环境
 
 - 主配置：`config/settings.yaml`（`cuda/std` 标准库层），缺省值在 `core/common/config.py`。
 - 扩展层配置：`config/settings.cuda.yaml`（`cuda/` 非 std 扩展层，前缀映射 `cuda -> asc`），
   用 `--settings config/settings.cuda.yaml`（放在子命令前）启用，详见上一节。
-- 迁移策略：`reference/symbol_mapping.yaml`，其中 `segment_substitutions`、`migration_policy`
-  与 `symbol_dependencies` 是运行时事实源。
+- 知识库索引：`reference/manifest.yaml`；具体映射在 `mappings/`，泛化规则在 `rules/`。
 - 源仓路径：`paths.cccl_repo`，默认 `repos/cccl`。
 - 目标仓路径：`paths.accl_repo`，默认 `repos/accl`。
 - 输出目录：`paths.output_dir`，默认 `outputs`。

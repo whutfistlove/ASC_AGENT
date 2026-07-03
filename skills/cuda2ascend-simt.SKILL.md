@@ -91,8 +91,8 @@ Keep code, APIs, file names, and error messages in their original technical lang
 - Prefer test-first migration work. For each migrated behavior, add or update the relevant test before finalizing implementation whenever the environment allows it.
 - No repeated blind fixes. If validation fails, investigate the root cause before changing more code.
 - Define scope and non-goals before implementation. Do not expand scope during migration unless a blocker forces a documented plan update.
-- If `reference/constraint_rules.yaml` classifies an unsupported item with `action: stop_and_report`, stop and report `UNSUPPORTED_FEATURE_ERROR`.
-- If `reference/constraint_rules.yaml` classifies an unsupported item with `action: remove_and_record`, treat it as an unsupported removable subpath: exclude it from implementation and validation, record the exclusion in `plan.md`, and continue only if supported source-visible behavior remains.
+- If `reference/rules/constraints.yaml` classifies an unsupported item with `action: stop_and_report`, stop and report `UNSUPPORTED_FEATURE_ERROR`.
+- If `reference/rules/constraints.yaml` classifies an unsupported item with `action: remove_and_record`, treat it as an unsupported removable subpath: exclude it from implementation and validation, record the exclusion in `plan.md`, and continue only if supported source-visible behavior remains.
 - Native JIT compilation or loading paths are unsupported in the current migration model. Do not preserve, generate, or validate `nvrtc`, runtime compilation, extension JIT loading, or other on-the-fly native-code compilation/loading paths in migrated outputs.
 - Do not classify PyTorch dispatcher metadata, `torch.library.register_fake`, FakeTensor/meta kernels, or Python wrapper code kept only for `torch.compile` compatibility as native JIT compilation/loading paths unless they compile or load native code at runtime.
 - Complex dtypes are unsupported removable dtype subpaths in the current migration model. For torch migration work, detect complex dtype branches explicitly and exclude complex dtype implementation and validation paths from the migrated result. If no supported non-complex behavior remains, report the migration as blocked.
@@ -114,9 +114,9 @@ Load only the resource needed for the current step.
 - For `reference/api-mapping/runtime_api.yaml`, encode the matching runtime subcategory in `category` using the form `runtime/<subcategory-kebab-case>`, such as `runtime/device-management` or `runtime/memory-management`.
 - Load `reference/api-mapping/device_api.yaml` when translating CUDA device APIs, intrinsics, thread-level primitives, or math helpers.
 - Load `reference/api-mapping/runtime_api.yaml` when translating host runtime behavior such as memory allocation, memcpy, stream management, launch setup, and error handling.
-- Load `reference/grammar_rules.yaml` as the source of truth for syntax rewrite rules.
+- Load `reference/rules/grammar.yaml` as the source of truth for syntax rewrite rules.
 - Load `reference/grammar.md` as the human-readable browse view for syntax rewrites.
-- Load `reference/constraint_rules.yaml` as the source of truth for unsupported or restricted feature rules.
+- Load `reference/rules/constraints.yaml` as the source of truth for unsupported or restricted feature rules.
 - Load `reference/constraints.md` as the human-readable browse view for migration constraints.
 - Load `reference/validation-checklist.md` before making any final success or completion claim.
 - Load `reference/schema.md` when updating or extending the mapping references.
@@ -340,6 +340,7 @@ Implementation rules:
 - rewrite only the incompatible parts
 - if the selected path depends on a public upper-layer abstraction shared across CPU, CUDA, and HIP and directly includable from the installed package, prefer reuse by include instead of remigration
 - if the selected path depends on a CUDA-specific file, helper, or backend-private path, analyze the dependency recursively and complete migration of the required chain
+- when a dependency has already been migrated, write the caller against that dependency's **migrated Ascend counterpart** (its actual include form, macro names, namespace, and signatures) — not the CUDA-side shape; read the migrated dependency file before consuming it, since the CUDA→Ascend mapping is not 1:1
 - if the selected path depends on a CUDA-specific abstraction that is likely reusable by sibling operators, prefer implementing an Ascend counterpart at that abstraction layer before writing operator-local kernels
 - preserve source kernel partitioning, shape-based dispatch, and launch-policy branching by default; only merge or simplify them when the user explicitly approves that downgrade
 - when a syntax rewrite is necessary, apply the minimum rewrite required by the documented Ascend C SIMT grammar or constraint limitation instead of redesigning the operator around that limitation

@@ -117,12 +117,24 @@ def test_reference_policy_matches_runtime_config():
     root = Path(__file__).resolve().parents[1]
     cfg = Config.load(root / "config" / "settings.yaml", project_root=root)
     assert cfg.segment_substitutions == [{"from": "__cccl", "to": "__asc"}]
-    assert {
-        "symbol": "_CUDA_VSTD::move",
-        "kind": "qualified-name",
-        "header": "__utility/move.h",
-        "include": "cuda/std/__utility/move.h",
-    } in cfg.symbol_dependency_rules
+    rules = cfg.implicit_dependency_rules
+    assert any(
+        rule.get("resolver") == "header_stem" and "CUDA_VSTD" in rule.get("pattern", "")
+        for rule in rules
+    )
+    assert not any(rule.get("symbol") == "_CUDA_VSTD::move" for rule in rules)
+    assert any(
+        rule.get("provider_overrides", {}).get("move_if_noexcept") == "__utility/move.h"
+        for rule in rules
+    )
+
+
+def test_kernel_requirement_judge_skill_is_loadable():
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config.load(root / "config" / "settings.yaml", project_root=root)
+    prompt = cfg.read_skill("judge_kernel_requirement.md")
+    assert "kernel_applicable" in prompt
+    assert "needs_kernel_test" in prompt
 
 
 def test_reference_segment_substitutions_override_config(tmp_path):

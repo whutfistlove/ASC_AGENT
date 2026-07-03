@@ -28,7 +28,7 @@ from core.analysis.migration_status import build_migration_status_report
 from core.analysis.test_index import scan_test_index
 from core.common.config import Config, MigrationPolicy, default_migration_policy
 from core.llm.model_client import MockModelClient
-from core.migration.pipeline import Pipeline, _transitive_dependents
+from core.migration.pipeline import Pipeline, _reverse_dep_map, _transitive_dependents
 from core.testing.verify_includes import (
     include_directive_for,
     parse_missing_includes,
@@ -254,8 +254,9 @@ def test_verify_header_self_contained_detects_missing_and_ok(tmp_path):
 def test_transitive_dependents():
     dep_map = {"a": ["b", "d"], "b": ["c"], "c": [], "d": []}
     universe = {"a", "b", "c", "d"}
-    assert _transitive_dependents("c", dep_map, universe) == {"a", "b"}
-    assert _transitive_dependents("d", dep_map, universe) == {"a"}
+    reverse = _reverse_dep_map(dep_map, universe)
+    assert _transitive_dependents("c", reverse) == {"a", "b"}
+    assert _transitive_dependents("d", reverse) == {"a"}
 
 
 def test_closure_defers_only_dependents_of_failed_leaf(tmp_path):

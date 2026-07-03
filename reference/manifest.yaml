@@ -1,0 +1,47 @@
+schema_version: 2
+
+# Concrete facts: each dataset contains explicit CCCL -> ASC mappings.
+mapping_sets:
+  - id: header-macros
+    kind: macro
+    file: mappings/macros.yaml
+    inject: true
+  - id: header-namespaces
+    kind: namespace
+    file: mappings/namespaces.yaml
+    inject: true
+  - id: header-includes
+    kind: include
+    file: mappings/includes.yaml
+    inject: true
+  - id: implicit-provider-overrides
+    kind: symbol-provider
+    file: mappings/symbol_providers.yaml
+    inject: false
+
+# Reusable behavior: these records describe how to match or decide, not one
+# particular C++ symbol spelling.
+rule_sets:
+  - id: grammar
+    kind: grammar
+    file: rules/grammar.yaml
+  - id: constraints
+    kind: constraint
+    file: rules/constraints.yaml
+  - id: implicit-dependencies
+    kind: implicit_dependency
+    file: rules/implicit_dependencies.yaml
+
+strategy:
+  segment_substitutions: mappings/path_segments.yaml
+  migration_policy: rules/migration_policy.yaml
+
+# Large API catalogs are registered separately and queried on demand. They are
+# deliberately not injected wholesale into header-migration prompts.
+catalog_sets:
+  - id: runtime-api
+    kind: api
+    file: api-mapping/runtime_api.yaml
+  - id: device-api
+    kind: api
+    file: api-mapping/device_api.yaml

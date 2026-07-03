@@ -45,6 +45,9 @@ def _seed_project(tmp_path: Path) -> Path:
     (project / "repos" / "accl").mkdir(parents=True)
     (project / "skills").mkdir(parents=True)
     (project / "skills" / "migrate_tests.md").write_text("return JSON\n", encoding="utf-8")
+    (project / "skills" / "judge_kernel_requirement.md").write_text(
+        "judge kernel applicability and return JSON\n", encoding="utf-8"
+    )
     return project
 
 
@@ -91,7 +94,7 @@ def test_test_plan_cli_writes_selected_and_deferred_report(tmp_path, monkeypatch
     )
 
     captured = capsys.readouterr()
-    report_path = project / "outputs" / "fixture_test_plan.json"
+    report_path = project / "outputs" / "reports" / "fixture_test_plan.json"
     assert code == 0
     assert "Node 13 upstream test migration plan" in captured.out
     assert report_path.exists()
@@ -126,11 +129,13 @@ def test_test_migrate_mock_writes_artifact_report(tmp_path, monkeypatch, capsys)
     code = cli.cmd_test_migrate(_migrate_args(cccl_repo=str(cccl)))
 
     captured = capsys.readouterr()
-    report_path = project / "outputs" / "fixture_test_migration_artifacts.json"
+    report_path = project / "outputs" / "model" / "fixture_test_migration_artifacts.json"
     assert code == 0
     assert "Node 13 AI test migration artifacts" in captured.out
     data = json.loads(report_path.read_text(encoding="utf-8"))
     assert data["algo_name"] == "max"
+    assert data["kernel_requirement"]["agreement"] is True
+    assert data["kernel_requirement"]["needs_kernel_test"] is True
     assert data["kernel_spec"]["dtype"] == "float"
     assert data["upstream_test_plan"]["summary"]["selected_count"] == 1
     deferred = {item["relative_path"]: item["reason"] for item in data["upstream_test_plan"]["deferred_tests"]}

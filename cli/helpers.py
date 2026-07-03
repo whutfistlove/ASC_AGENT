@@ -25,6 +25,8 @@ from core.testing.test_migrator import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SETTINGS = PROJECT_ROOT / "config" / "settings.yaml"
+# 整树（cuda/std 标准库层 + cuda 扩展层 + 跨层依赖）规划/迁移用的层映射（cuda -> asc）。
+DEFAULT_CUDA_SETTINGS = PROJECT_ROOT / "config" / "settings.cuda.yaml"
 DEFAULT_LEDGER_PATH = PROJECT_ROOT / "docs" / "migration_ledger.md"
 
 
@@ -80,7 +82,7 @@ def write_batch_report(config: Config, results: list[RunResult]) -> Path:
         },
         "results": [r.to_dict() for r in results],
     }
-    report_path = config.output_dir / "batch_report.json"
+    report_path = config.reports_output_dir / "batch_report.json"
     save_text(report_path, json.dumps(report, ensure_ascii=False, indent=2))
     return report_path
 
@@ -89,7 +91,7 @@ def write_dependency_convert_report(config: Config, result, output: str) -> Path
     name = Path(output)
     if name.is_absolute() or len(name.parts) != 1:
         raise ValueError("dependency convert report filename must be a file name under outputs/")
-    report_path = config.output_dir / name
+    report_path = config.reports_output_dir / name
     save_text(report_path, json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     return report_path
 
@@ -176,13 +178,44 @@ def _maybe_migrate_tests(
 ) -> dict | None:
     """用模型把 CCCL 侧测试迁移为 ACCL host 测试 + kernel_spec。
 
-    不可用时返回 None（调用方回退到内置模板）：mock / test-dry-run / 无 model /
-    找不到 CCCL 测试 / 未找到已迁移的 ACCL 头 / 迁移异常。
+    真实模型和输入头可用时，先完成规则 + 模型的 kernel 适用性判定；即使找不到
+    可迁移的上游测试，也返回判定供执行阶段使用。mock / test-dry-run / 无 model
+    或无输入头时返回 None，执行阶段按「模型不可用 => 需要 kernel」保守处理。
     """
     if getattr(args, "mock", False) or getattr(args, "test_dry_run", False):
         return None
     if model_client is None or not input_path:
         return None
+
+    accl_header = Path(config.target_repo) / target_relpath
+    if not accl_header.exists():
+        if verbose:
+            print(f"[test-migrate] 未找到已迁移的 ACCL 头 {accl_header}，回退内置模板。")
+        return None
+
+    from core.testing.kernel_requirement import decide_kernel_requirement
+
+    accl_header_text = accl_header.read_text(encoding="utf-8")
+    cccl_header_text = Path(input_path).read_text(encoding="utf-8")
+    # 规则和模型独立判断；只有一致认为 host-only 才允许省略 kernel。
+    kernel_decision = decide_kernel_requirement(
+        config=config,
+        model_client=model_client,
+        relpath=target_relpath,
+        source_text=cccl_header_text or accl_header_text,
+        target_text=accl_header_text,
+        host_only_modules=config.kernel_host_only_modules,
+        show_model_io=getattr(args, "show_model_io", False),
+    )
+    if verbose:
+        model_label = kernel_decision.model_classification or kernel_decision.model_status
+        print(
+            "[kernel-judge] "
+            f"rule={kernel_decision.rule_classification}, model={model_label}, "
+            f"final={'kernel' if kernel_decision.needs_kernel_test else 'host-only'} "
+            f"({kernel_decision.resolution})"
+        )
+
     test_index = None
     entry_header = ""
     inferred = _infer_real_cccl_root_and_entry_header(
@@ -217,15 +250,11 @@ def _maybe_migrate_tests(
         if verbose:
             missing = cccl_test_path or "<unmapped>"
             print(f"[test-migrate] 未找到 CCCL 侧测试 {missing}，回退内置模板。")
-        return None
-    accl_header = Path(config.target_repo) / target_relpath
-    if not accl_header.exists():
-        if verbose:
-            print(f"[test-migrate] 未找到已迁移的 ACCL 头 {accl_header}，回退内置模板。")
-        return None
+        return {"kernel_requirement": kernel_decision.to_dict()}
 
     algo_name = OperatorTestRunner.algo_name_from_target_relpath(target_relpath)
     include_path = OperatorTestRunner.include_path_from_target_relpath(target_relpath)
+    kernel_required = kernel_decision.needs_kernel_test
     try:
         artifacts = migrate_operator_tests(
             config,
@@ -233,11 +262,12 @@ def _maybe_migrate_tests(
             algo_name=algo_name,
             include_path=include_path,
             target_relpath=target_relpath,
-            cccl_header_text=Path(input_path).read_text(encoding="utf-8"),
-            accl_header_text=accl_header.read_text(encoding="utf-8"),
+            cccl_header_text=cccl_header_text,
+            accl_header_text=accl_header_text,
             cccl_test_text=legacy_test_text,
             test_index=test_index,
             entry_header=entry_header,
+            kernel_required=kernel_required,
             verbose=verbose,
             show_model_io=getattr(args, "show_model_io", False),
             toolbox=_maybe_build_toolbox(config),  # 生成期取证/自检（默认关闭→None）
@@ -246,10 +276,11 @@ def _maybe_migrate_tests(
     except Exception as exc:  # 迁移失败不应中断流程，回退模板
         if verbose:
             print(f"[test-migrate] 迁移失败（{type(exc).__name__}: {exc}），回退内置模板。")
-        return None
+        return {"kernel_requirement": kernel_decision.to_dict()}
     return {
         "host_test_code": artifacts.host_test_code,
         "kernel_spec": artifacts.kernel_spec,
+        "kernel_requirement": kernel_decision.to_dict(),
         "upstream_test_plan": (
             artifacts.upstream_test_plan.to_dict()
             if artifacts.upstream_test_plan is not None
@@ -283,6 +314,7 @@ def _run_operator_tests(
         kernel_timeout_sec=kernel_timeout,
         fast_kernel=kernel_fast,
         kernel_print_samples=getattr(args, "kernel_print_samples", None),
+        force_kernel=getattr(args, "force_kernel", False),
     )
     artifacts = test_artifacts or {}
     tr = runner.prepare_and_run(
@@ -294,6 +326,12 @@ def _run_operator_tests(
         overwrite=args.overwrite_tests,
         host_test_code=artifacts.get("host_test_code"),
         kernel_spec=artifacts.get("kernel_spec"),
+        kernel_required_override=(
+            artifacts.get("kernel_requirement", {}).get("needs_kernel_test")
+            if artifacts.get("kernel_requirement")
+            else None
+        ),
+        kernel_requirement_decision=artifacts.get("kernel_requirement"),
     )
     result = tr.to_dict()
     if artifacts.get("upstream_test_plan") is not None:
@@ -320,7 +358,10 @@ def _dimension_state(test_result: dict, dimension: str) -> str:
         return "PASSED"
     if test_result.get(f"{dimension}_smoke_passed"):
         return "SMOKE"
-    if test_result.get(f"{dimension}_failure_kind") == "skipped":
+    failure_kind = test_result.get(f"{dimension}_failure_kind")
+    if failure_kind == "not_applicable":
+        return "N/A"
+    if failure_kind == "skipped":
         return "SKIPPED"
     return "FAILED"
 
@@ -332,17 +373,18 @@ def _tests_all_passed(test_result: dict, run_host: bool, run_kernel: bool, test_
         return True
     if test_dry_run:
         return True
-    # 被预检跳过的一侧（如无 cannsim 跳过 kernel）不计为失败。
+    # 被预检跳过的一侧（无 cannsim → skipped）或对该头不适用（host-only → not_applicable）不计为失败。
+    _non_failing = ("skipped", "not_applicable")
     if (
         run_host
         and not _dimension_semantic_passed(test_result, "host")
-        and test_result.get("host_failure_kind") != "skipped"
+        and test_result.get("host_failure_kind") not in _non_failing
     ):
         return False
     if (
         run_kernel
         and not _dimension_semantic_passed(test_result, "kernel")
-        and test_result.get("kernel_failure_kind") != "skipped"
+        and test_result.get("kernel_failure_kind") not in _non_failing
     ):
         return False
     return True
@@ -372,7 +414,7 @@ def _cli_cccl_repo(config: Config, args) -> str:
 def _state_store_path(config: Config) -> Path:
     from core.analysis.migration_state import DEFAULT_STATE_FILENAME
 
-    return config.output_dir / DEFAULT_STATE_FILENAME
+    return config.state_output_dir / DEFAULT_STATE_FILENAME
 
 
 def _state_status_map(config: Config, header_root: str) -> dict:
@@ -497,7 +539,7 @@ def _build_test_feedback_text(test_result: dict) -> str:
 
 
 def _read_commit_feedback_text(config: Config, rounds_used: int) -> str:
-    out = config.output_dir
+    out = config.repo_log_output_dir
     candidates = [
         out / f"git_commit_round{rounds_used}.log",
         out / "git_commit.log",
@@ -543,8 +585,8 @@ def _generate_model_fix_from_test_feedback(
     return {
         "skipped": False,
         "fixed_target_path": str(fixed),
-        "request_path": str(config.output_dir / "fix_request_test_feedback.md"),
-        "result_json_path": str(config.output_dir / "fix_result_test_feedback.json"),
+        "request_path": str(config.fix_output_dir / "fix_request_test_feedback.md"),
+        "result_json_path": str(config.fix_output_dir / "fix_result_test_feedback.json"),
     }
 
 

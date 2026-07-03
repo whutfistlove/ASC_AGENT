@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<int64_t>(i % 20) - 10; h_in1[i] = static_cast<int64_t>((i * 3 + 5) % 20) - 10;",
+  "element_op_code": "z_val = asc::std::lcm(x_val, y_val);",
+  "golden_code": "int64_t a_ref = (x_ref < 0) ? -x_ref : x_ref;\nint64_t b_ref = (y_ref < 0) ? -y_ref : y_ref;\nif (a_ref == 0 || b_ref == 0) {\n    expected0 = 0;\n} else {\n    int64_t ta = a_ref, tb = b_ref;\n    while (tb != 0) {\n        int64_t r = ta % tb;\n        ta = tb;\n        tb = r;\n    }\n    expected0 = (a_ref / ta) * b_ref;\n}",
+  "gm_inputs": 2,
+  "gm_outputs": 1,
+  "dtype": "int64_t"
+}

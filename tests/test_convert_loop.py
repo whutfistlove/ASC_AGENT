@@ -131,7 +131,13 @@ def test_maybe_migrate_tests_uses_real_index_with_mock_model(tmp_path):
         },
         "notes": "mock test migration",
     }
-    model = MockModelClient(responses=[json.dumps(payload)])
+    judge = {
+        "classification": "kernel_applicable",
+        "needs_kernel_test": True,
+        "reason": "max has runtime device semantics",
+        "evidence": ["max function"],
+    }
+    model = MockModelClient(responses=[json.dumps(judge), json.dumps(payload)])
 
     artifacts = main._maybe_migrate_tests(
         _args(test_dry_run=False, mock=False),
@@ -144,12 +150,13 @@ def test_maybe_migrate_tests_uses_real_index_with_mock_model(tmp_path):
 
     assert artifacts is not None
     assert artifacts["kernel_spec"]["dtype"] == "int32_t"
+    assert artifacts["kernel_requirement"]["needs_kernel_test"] is True
     plan = artifacts["upstream_test_plan"]
     assert plan["summary"]["selected_count"] == 1
     assert plan["summary"]["deferred_count"] == 1
     assert plan["selected_tests"][0]["relative_path"] == "algorithms/max.pass.cpp"
     assert plan["deferred_tests"][0]["reason"] == "verify-deferred"
-    assert "selected_max" in model.calls[0]["user_content"]
+    assert "selected_max" in model.calls[1]["user_content"]
 
 
 def test_record_migration_state_ignores_smoke_only_pass(tmp_path):

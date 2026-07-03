@@ -104,6 +104,7 @@ normalize:
   fix_directive_spacing: true
   ensure_trailing_newline: true
 
-# 迁移策略不在 settings.yaml 维护；统一在 reference/symbol_mapping.yaml：
-#   segment_substitutions
-#   migration_policy
+# 迁移策略不在 settings.yaml 维护；由 reference/manifest.yaml 注册：
+#   mappings/path_segments.yaml
+#   rules/migration_policy.yaml
+#   rules/implicit_dependencies.yaml

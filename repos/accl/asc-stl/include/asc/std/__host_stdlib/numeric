@@ -1,0 +1,19 @@
+#ifndef ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_NUMERIC_
+#define ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_NUMERIC_
+
+#include "asc/std/__config"
+
+#if defined(__CCE__)
+#define ASC_DEVICE_CODE
+#else
+#include <numeric>
+#endif
+
+// [MIGRATION NOTE] The original CCCL header conditionally included the host's
+// <numeric> via _CCCL_HOSTED() and defined THRUST_INCLUDING_ALGORITHMS_HEADER
+// to break include cycles in NVC++/Thrust. ASC-STL does not have _CCCL_HOSTED,
+// so we include <numeric> directly on the host side. On the device side (__CCE__),
+// <numeric> is not available. The THRUST_INCLUDING_ALGORITHMS_HEADER cycle-breaking
+// logic is NVC++/Thrust-specific and has been removed.
+
+#endif // ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_NUMERIC_

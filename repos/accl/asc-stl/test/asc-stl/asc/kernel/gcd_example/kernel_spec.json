@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = static_cast<int32_t>((i * 7 + 3) % 199) - 99; h_in1[i] = static_cast<int32_t>((i * 13 + 5) % 199) - 99;",
+  "element_op_code": "out0_val = asc::std::gcd(in0_val, in1_val);",
+  "golden_code": "int32_t a = (in0_ref < 0) ? -in0_ref : in0_ref; int32_t b = (in1_ref < 0) ? -in1_ref : in1_ref; while (b != 0) { int32_t t = a % b; a = b; b = t; } expected0 = a;",
+  "gm_inputs": 2,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

@@ -70,6 +70,64 @@ def test_include_path_requires_include_segment():
         OperatorTestRunner.include_path_from_target_relpath("asc-stl/src/foo.h")
 
 
+def test_host_only_header_skips_kernel_as_not_applicable(tmp_path):
+    """type_trait/host-only 头：不生成/不运行 kernel，标 not_applicable，且不计失败。"""
+    from cli.helpers import _tests_all_passed
+
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+
+    res = runner.prepare_and_run(
+        "asc-stl/include/asc/std/__type_traits/is_foo.h",
+        run_host=True,
+        run_kernel=True,
+        kernel_required_override=False,
+        kernel_requirement_decision={
+            "rule_needs_kernel_test": False,
+            "model_needs_kernel_test": False,
+            "model_status": "ok",
+            "agreement": True,
+            "needs_kernel_test": False,
+            "resolution": "agreement",
+        },
+    )
+
+    assert res.kernel_failure_kind == "not_applicable"
+    assert res.kernel_prepared is False
+    assert res.kernel_test_dir == ""        # 没有生成 kernel 脚手架
+    assert res.host_prepared is True
+    assert len(res.commands) == 1           # 只跑了 host（dry-run）
+    # host 维度未失败时，kernel not_applicable 不应让整体判为失败。
+    assert _tests_all_passed(res.to_dict(), run_host=True, run_kernel=True, test_dry_run=True) is True
+
+
+def test_host_only_without_model_consensus_requires_kernel(tmp_path):
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)
+    res = runner.prepare_and_run(
+        "asc-stl/include/asc/std/__type_traits/is_foo.h",
+        run_host=True,
+        run_kernel=True,
+    )
+    assert res.kernel_prepared is True
+    assert res.kernel_requirement_decision["resolution"] == "model_unavailable_requires_kernel"
+
+
+def test_force_kernel_overrides_host_only_classification(tmp_path):
+    cfg = _make_config(tmp_path)
+    runner = OperatorTestRunner(cfg, verbose=False, dry_run=True, force_kernel=True)
+
+    res = runner.prepare_and_run(
+        "asc-stl/include/asc/std/__type_traits/is_foo.h",
+        run_host=True,
+        run_kernel=True,
+    )
+
+    assert res.kernel_failure_kind != "not_applicable"
+    assert res.kernel_prepared is True
+    assert len(res.commands) == 2           # host + kernel 都跑
+
+
 def test_prepare_tests_with_artifacts_uses_model_host_and_kernel_spec(tmp_path):
     cfg = _make_config(tmp_path)
     runner = OperatorTestRunner(cfg, verbose=False, dry_run=True)

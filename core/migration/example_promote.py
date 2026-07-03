@@ -230,7 +230,7 @@ def promote_operator(
             MigrationStateStore,
         )
 
-        store = MigrationStateStore.load(config.output_dir / DEFAULT_STATE_FILENAME)
+        store = MigrationStateStore.load(config.state_output_dir / DEFAULT_STATE_FILENAME)
         entry = store.headers.get(f"{art.module}/{op_name}.h")
         if entry is not None and entry.status not in VALIDATED_STATUSES:
             result["skipped"].append(f"promotion_blocked_state_status:{entry.status}")

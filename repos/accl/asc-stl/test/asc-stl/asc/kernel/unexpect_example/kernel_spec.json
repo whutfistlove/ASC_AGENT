@@ -1,0 +1,8 @@
+{
+  "input_init": "h_in0[i] = i;",
+  "element_op_code": "asc::std::unexpect_t tag{}; (void)tag; out0_val = in0_val;",
+  "golden_code": "expected0 = in0_ref;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "int32_t"
+}

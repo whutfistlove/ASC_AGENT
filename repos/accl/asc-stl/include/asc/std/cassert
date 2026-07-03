@@ -1,0 +1,12 @@
+#ifndef ASC_STL_INCLUDE_ASC_STD_CASSERT_
+#define ASC_STL_INCLUDE_ASC_STD_CASSERT_
+
+#include "asc/std/__config"
+
+#if defined(__CCE__)
+#define ASC_DEVICE_CODE
+#endif
+
+#include <cassert>
+
+#endif // ASC_STL_INCLUDE_ASC_STD_CASSERT_

@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 
 from cli.commands import (
+    cmd_api_map,
     cmd_batch,
     cmd_convert,
     cmd_dep_graph,
+    cmd_dep_layers,
     cmd_dependency_convert,
     cmd_folder_migrate,
     cmd_folder_plan,
@@ -24,6 +26,7 @@ from cli.commands import (
     cmd_test_migrate,
     cmd_test_plan,
 )
+from core.planning.dependency_layers import DEFAULT_DEP_LAYERS_JSON, DEFAULT_DEP_LAYERS_MD
 from core.planning.folder_planner import DEFAULT_FOLDER_PLAN_JSON, DEFAULT_FOLDER_PLAN_MD
 from core.planning.package_planner import DEFAULT_PACKAGE_PLAN_JSON, DEFAULT_PACKAGE_PLAN_MD
 
@@ -39,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--with-tests", action="store_true", help="迁移完成后自动生成并执行算子测试")
         p.add_argument("--host-only", action="store_true", help="只执行 host 侧测试")
         p.add_argument("--kernel-only", action="store_true", help="只执行 kernel 侧测试")
+        p.add_argument(
+            "--force-kernel",
+            action="store_true",
+            help="强制对 host-only 头（type_trait/宏等）也跑 kernel 测试；默认对其标 not_applicable 跳过",
+        )
         p.add_argument(
             "--kernel-mode",
             choices=("run_test", "full_project"),
@@ -132,6 +140,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_self = sub.add_parser("selftest", help="离线冒烟测试")
     p_self.set_defaults(func=cmd_selftest)
+
+    p_api_map = sub.add_parser(
+        "api-map",
+        help="独立逐文件审计 cuda/ 全树引用的外部 CUDA/NV 平台 API（排除包内依赖），并映射到 docs/SIMT-API",
+    )
+    p_api_map.add_argument("--source-root", help="CCCL include/cuda 根目录；默认 repos/cccl/libcudacxx/include/cuda")
+    p_api_map.add_argument("--docs-root", help="晟腾 SIMT Markdown 根目录；默认 docs/SIMT-API")
+    p_api_map.add_argument("--output-dir", help="独立输出目录；默认 outputs/api_mapping")
+    p_api_map.add_argument("--include", action="append", default=[], help="只分析匹配的相对路径 glob；可重复，如 std/__cmath/*")
+    p_api_map.add_argument("--exclude", action="append", default=[], help="排除相对路径 glob；可重复")
+    p_api_map.add_argument("--limit", type=int, default=0, help="最多分析多少个文件，0=全部（用于小批验证）")
+    p_api_map.add_argument("--prepare-only", action="store_true", help="只生成源文件清单与 SIMT 文档索引，不调用模型")
+    p_api_map.add_argument("--mock", action="store_true", help="离线验证调度/续跑/汇总；不产生真实 API 结论")
+    p_api_map.add_argument("--real-ai", action="store_true", help="显式允许逐文件调用真实模型")
+    p_api_map.add_argument("--no-resume", action="store_true", help="忽略已完成且指纹一致的文件，全部重跑")
+    p_api_map.add_argument("--retry-failed", action="store_true", help="续跑时重新处理上次失败的文件")
+    p_api_map.add_argument("--fail-fast", action="store_true", help="首个文件失败即停止；默认记录失败并继续")
+    p_api_map.add_argument("--max-source-chars", type=int, default=32000, help="单个源分片最大字符数；大头完整分片处理")
+    p_api_map.add_argument("--source-overlap-lines", type=int, default=24, help="相邻源分片重叠行数，防止声明被切断")
+    p_api_map.add_argument("--max-apis-per-mapping-call", type=int, default=10, help="单次文档映射最多处理的源 API 数")
+    p_api_map.add_argument("--top-docs-per-api", type=int, default=4, help="每个源 API 检索的 SIMT 文档候选数")
+    p_api_map.add_argument("--max-docs-per-mapping-call", type=int, default=32, help="单次映射调用注入的文档数上限")
+    p_api_map.add_argument("--max-doc-chars", type=int, default=2800, help="单篇候选文档注入字符数")
+    p_api_map.add_argument("--model-retries", type=int, default=2, help="schema/覆盖率校验失败后的模型重试次数")
+    p_api_map.add_argument("--show-model-io", action="store_true", help="实时显示完整 API 提取/映射模型交互")
+    p_api_map.add_argument("--no-save-model-io", action="store_true", help="不保存每轮 request/response 审计文件")
+    p_api_map.set_defaults(func=cmd_api_map)
 
     p_inventory = sub.add_parser(
         "inventory",
@@ -372,6 +407,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=cccl_repo_help,
     )
     p_package_plan.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="分析整个 cuda 树（cuda/std 标准库层 + cuda 扩展层 + 跨层依赖）；等价于 --settings config/settings.cuda.yaml",
+    )
+    p_package_plan.add_argument(
         "--output-json", default=DEFAULT_PACKAGE_PLAN_JSON, help="写入 outputs/ 下的 JSON 文件名（活台账）"
     )
     p_package_plan.add_argument(
@@ -390,6 +430,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_package_plan.add_argument("--quiet", action="store_true", help="减少日志输出")
     p_package_plan.set_defaults(func=cmd_package_plan)
 
+    p_dep_layers = sub.add_parser(
+        "dep-layers",
+        help="对整个源 CCCL 包做严格依赖分层：Layer 0=库内零依赖头，逐层递进；每个头列出全部依赖"
+        "（库内 + 系统/外部头）。不调用模型、不看迁移状态。",
+    )
+    p_dep_layers.add_argument(
+        "--cccl-repo",
+        help=cccl_repo_help,
+    )
+    p_dep_layers.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="分析整个 cuda 树（cuda/std 标准库层 + cuda 扩展层 + 跨层依赖）；等价于 --settings config/settings.cuda.yaml",
+    )
+    p_dep_layers.add_argument(
+        "--output-json", default=DEFAULT_DEP_LAYERS_JSON, help="写入 outputs/plans/ 下的 JSON 文件名"
+    )
+    p_dep_layers.add_argument(
+        "--output-md", default=DEFAULT_DEP_LAYERS_MD, help="写入 outputs/plans/ 下的 Markdown 文件名"
+    )
+    p_dep_layers.add_argument("--quiet", action="store_true", help="减少日志输出")
+    p_dep_layers.set_defaults(func=cmd_dep_layers)
+
     p_package_migrate = sub.add_parser(
         "package-migrate",
         help="读取 package-plan 产物，人工确认后按波次批次执行闭包迁移，并自动回写已完成标记",
@@ -401,6 +464,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="执行哪个批次：next（首个仍有未完成头的波次）/ all / batch-1 / batch-2 / 或逗号分隔 header 列表",
     )
     p_package_migrate.add_argument("--approve", action="store_true", help="确认已人工审阅计划，允许执行迁移")
+    p_package_migrate.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="按整个 cuda 树（含扩展层与跨层依赖）迁移；等价于 --settings config/settings.cuda.yaml（须与 package-plan 一致）",
+    )
     p_package_migrate.add_argument(
         "--cccl-repo",
         help=cccl_repo_help,

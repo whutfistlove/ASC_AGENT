@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.common.config import Config
@@ -53,6 +54,82 @@ def build_fix_request(target_relpath: str, expected_header_guard: str,
 """
 
 
+@dataclass(frozen=True)
+class _FixOutputNames:
+    """单轮「头文件修复」产物的 5 个落盘文件名（request/raw/result/fixed/notes）。"""
+
+    request: str
+    raw: str
+    result: str
+    fixed: str
+    notes: str
+
+
+# 「模型本轮没改东西」时追加到 notes 的提示；两种基线口径用不同文案。
+_BASELINE_UNCHANGED_NOTE = "\n\n[系统提示] 模型未产生与最新 post-hook 基线不同的结果，已保留基线版本。"
+_CURRENT_UNCHANGED_NOTE = "\n\n[系统提示] 模型未产生与当前代码不同的结果，已保留原版本。"
+
+
+def _run_header_fix(
+    config: Config,
+    model_client: BaseModelClient,
+    *,
+    target_relpath: str,
+    expected_header_guard: str,
+    baseline_text: str,
+    commit_log_text: str,
+    test_feedback_text: str,
+    prompt_filename: str,
+    stage: str,
+    log_message: str,
+    unchanged_note: str,
+    names: _FixOutputNames,
+    verbose: bool,
+    show_model_io: bool,
+) -> tuple[Path, str]:
+    """单轮头文件修复的共同骨架（三个 run_single_fix_* / run_test_feedback_fix 复用）。
+
+    构造修复请求 -> 调模型 -> 抽 JSON -> 归一化 -> 与基线比对去重 -> 落盘 5 件，
+    返回 (修复稿路径, 修复后代码文本)。差异仅在基线/日志来源、stage 文案与输出文件名。
+    """
+    output_dir = config.fix_output_dir
+    fix_request_text = build_fix_request(
+        target_relpath=target_relpath,
+        expected_header_guard=expected_header_guard,
+        baseline_text=baseline_text,
+        commit_log_text=commit_log_text,
+        test_feedback_text=test_feedback_text,
+    )
+    save_text(output_dir / names.request, fix_request_text)
+
+    prompt_text = config.read_skill(prompt_filename)
+    if verbose:
+        print(log_message)
+    raw = call_model_with_io(
+        model_client, stage=stage, system_prompt=prompt_text,
+        user_content=fix_request_text, show_io=show_model_io,
+    )
+    save_text(output_dir / names.raw, raw)
+
+    result = extract_json_object(raw)
+    for field in ("rewritten_code", "notes"):
+        if field not in result:
+            raise ValueError(f"模型输出 JSON 缺少必要字段: {field}")
+
+    rewritten_code = normalize_generated_text(str(result["rewritten_code"]), config.normalize_options)
+    notes = str(result["notes"]).strip()
+    if rewritten_code.strip() == baseline_text.strip():
+        notes += unchanged_note
+        rewritten_code = baseline_text
+
+    result["rewritten_code"] = rewritten_code
+    save_text(output_dir / names.result, json.dumps(result, ensure_ascii=False, indent=2))
+    fixed_path = output_dir / names.fixed
+    save_text(fixed_path, rewritten_code)
+    save_text(output_dir / names.notes, notes)
+    return fixed_path, rewritten_code
+
+
 def run_single_fix_from_log(
     config: Config,
     model_client: BaseModelClient,
@@ -65,57 +142,36 @@ def run_single_fix_from_log(
     verbose: bool = True,
     show_model_io: bool = False,
 ) -> Path:
-    output_dir = config.output_dir
+    output_dir = config.fix_output_dir
     baseline_path = output_dir / "post_hook_baseline.h"
-    commit_log_path = output_dir / commit_log_filename
+    commit_log_path = config.repo_log_output_dir / commit_log_filename
 
     if not baseline_path.exists():
         raise FileNotFoundError(f"找不到 post-hook 基线文件: {baseline_path}")
     if not commit_log_path.exists():
         raise FileNotFoundError(f"找不到 commit 日志: {commit_log_path}")
 
-    baseline_text = baseline_path.read_text(encoding="utf-8")
-    commit_log_text = commit_log_path.read_text(encoding="utf-8")
-
-    fix_request_text = build_fix_request(
-        target_relpath, expected_header_guard, baseline_text, commit_log_text, test_feedback_text=test_feedback_text
+    fixed_path, _ = _run_header_fix(
+        config, model_client,
+        target_relpath=target_relpath,
+        expected_header_guard=expected_header_guard,
+        baseline_text=baseline_path.read_text(encoding="utf-8"),
+        commit_log_text=commit_log_path.read_text(encoding="utf-8"),
+        test_feedback_text=test_feedback_text,
+        prompt_filename=prompt_filename,
+        stage=f"第 {round_index} 轮修复",
+        log_message=f"开始调用模型进行第 {round_index} 轮修复...",
+        unchanged_note=_BASELINE_UNCHANGED_NOTE,
+        names=_FixOutputNames(
+            request=f"fix_request_round{round_index}.md",
+            raw=f"fix_model_raw_output_round{round_index}.md",
+            result=f"fix_result_round{round_index}.json",
+            fixed=f"fixed_target_round{round_index}.h",
+            notes=f"fix_notes_round{round_index}.md",
+        ),
+        verbose=verbose, show_model_io=show_model_io,
     )
-
-    fix_request_path = output_dir / f"fix_request_round{round_index}.md"
-    fix_raw_output_path = output_dir / f"fix_model_raw_output_round{round_index}.md"
-    fix_result_json_path = output_dir / f"fix_result_round{round_index}.json"
-    fixed_target_path = output_dir / f"fixed_target_round{round_index}.h"
-    fix_notes_path = output_dir / f"fix_notes_round{round_index}.md"
-
-    save_text(fix_request_path, fix_request_text)
-
-    prompt_text = config.read_skill(prompt_filename)
-    if verbose:
-        print(f"开始调用模型进行第 {round_index} 轮修复...")
-    raw = call_model_with_io(
-        model_client, stage=f"第 {round_index} 轮修复", system_prompt=prompt_text,
-        user_content=fix_request_text, show_io=show_model_io,
-    )
-    save_text(fix_raw_output_path, raw)
-
-    result = extract_json_object(raw)
-    for field in ("rewritten_code", "notes"):
-        if field not in result:
-            raise ValueError(f"模型输出 JSON 缺少必要字段: {field}")
-
-    rewritten_code = normalize_generated_text(str(result["rewritten_code"]), config.normalize_options)
-    notes = str(result["notes"]).strip()
-
-    if rewritten_code.strip() == baseline_text.strip():
-        notes += "\n\n[系统提示] 模型未产生与最新 post-hook 基线不同的结果，已保留基线版本。"
-        rewritten_code = baseline_text
-
-    result["rewritten_code"] = rewritten_code
-    save_text(fix_result_json_path, json.dumps(result, ensure_ascii=False, indent=2))
-    save_text(fixed_target_path, rewritten_code)
-    save_text(fix_notes_path, notes)
-
-    return fixed_target_path
+    return fixed_path
 
 
 def run_single_fix_from_test_feedback(
@@ -129,53 +185,32 @@ def run_single_fix_from_test_feedback(
     verbose: bool = True,
     show_model_io: bool = False,
 ) -> Path:
-    output_dir = config.output_dir
+    output_dir = config.fix_output_dir
     baseline_path = output_dir / "post_hook_baseline.h"
     if not baseline_path.exists():
         raise FileNotFoundError(f"找不到 post-hook 基线文件: {baseline_path}")
 
-    baseline_text = baseline_path.read_text(encoding="utf-8")
-    fix_request_text = build_fix_request(
+    fixed_path, _ = _run_header_fix(
+        config, model_client,
         target_relpath=target_relpath,
         expected_header_guard=expected_header_guard,
-        baseline_text=baseline_text,
+        baseline_text=baseline_path.read_text(encoding="utf-8"),
         commit_log_text=commit_log_text,
         test_feedback_text=test_feedback_text,
+        prompt_filename=prompt_filename,
+        stage="测试反馈修复",
+        log_message="开始调用模型基于测试反馈生成修复稿...",
+        unchanged_note=_BASELINE_UNCHANGED_NOTE,
+        names=_FixOutputNames(
+            request="fix_request_test_feedback.md",
+            raw="fix_model_raw_output_test_feedback.md",
+            result="fix_result_test_feedback.json",
+            fixed="fixed_target_test_feedback.h",
+            notes="fix_notes_test_feedback.md",
+        ),
+        verbose=verbose, show_model_io=show_model_io,
     )
-
-    fix_request_path = output_dir / "fix_request_test_feedback.md"
-    fix_raw_output_path = output_dir / "fix_model_raw_output_test_feedback.md"
-    fix_result_json_path = output_dir / "fix_result_test_feedback.json"
-    fixed_target_path = output_dir / "fixed_target_test_feedback.h"
-    fix_notes_path = output_dir / "fix_notes_test_feedback.md"
-
-    save_text(fix_request_path, fix_request_text)
-    prompt_text = config.read_skill(prompt_filename)
-    if verbose:
-        print("开始调用模型基于测试反馈生成修复稿...")
-    raw = call_model_with_io(
-        model_client, stage="测试反馈修复", system_prompt=prompt_text,
-        user_content=fix_request_text, show_io=show_model_io,
-    )
-    save_text(fix_raw_output_path, raw)
-
-    result = extract_json_object(raw)
-    for field in ("rewritten_code", "notes"):
-        if field not in result:
-            raise ValueError(f"模型输出 JSON 缺少必要字段: {field}")
-
-    rewritten_code = normalize_generated_text(str(result["rewritten_code"]), config.normalize_options)
-    notes = str(result["notes"]).strip()
-
-    if rewritten_code.strip() == baseline_text.strip():
-        notes += "\n\n[系统提示] 模型未产生与最新 post-hook 基线不同的结果，已保留基线版本。"
-        rewritten_code = baseline_text
-
-    result["rewritten_code"] = rewritten_code
-    save_text(fix_result_json_path, json.dumps(result, ensure_ascii=False, indent=2))
-    save_text(fixed_target_path, rewritten_code)
-    save_text(fix_notes_path, notes)
-    return fixed_target_path
+    return fixed_path
 
 
 def run_test_feedback_fix(
@@ -196,43 +231,26 @@ def run_test_feedback_fix(
 
     供 convert 的自动闭环按轮调用：每轮把上一版仓库代码当基线，产出新版用于写回再测。
     """
-    output_dir = config.output_dir
-    fix_request_text = build_fix_request(
+    return _run_header_fix(
+        config, model_client,
         target_relpath=target_relpath,
         expected_header_guard=expected_header_guard,
         baseline_text=baseline_text,
         commit_log_text=commit_log_text,
         test_feedback_text=test_feedback_text,
+        prompt_filename=prompt_filename,
+        stage=f"测试反馈修复 第 {round_index} 轮",
+        log_message=f"开始调用模型基于测试反馈生成第 {round_index} 轮修复...",
+        unchanged_note=_CURRENT_UNCHANGED_NOTE,
+        names=_FixOutputNames(
+            request=f"fix_request_test_round{round_index}.md",
+            raw=f"fix_model_raw_test_round{round_index}.md",
+            result=f"fix_result_test_round{round_index}.json",
+            fixed=f"fixed_target_test_round{round_index}.h",
+            notes=f"fix_notes_test_round{round_index}.md",
+        ),
+        verbose=verbose, show_model_io=show_model_io,
     )
-    save_text(output_dir / f"fix_request_test_round{round_index}.md", fix_request_text)
-
-    prompt_text = config.read_skill(prompt_filename)
-    if verbose:
-        print(f"开始调用模型基于测试反馈生成第 {round_index} 轮修复...")
-    raw = call_model_with_io(
-        model_client, stage=f"测试反馈修复 第 {round_index} 轮",
-        system_prompt=prompt_text, user_content=fix_request_text, show_io=show_model_io,
-    )
-    save_text(output_dir / f"fix_model_raw_test_round{round_index}.md", raw)
-
-    result = extract_json_object(raw)
-    for field in ("rewritten_code", "notes"):
-        if field not in result:
-            raise ValueError(f"模型输出 JSON 缺少必要字段: {field}")
-
-    rewritten_code = normalize_generated_text(str(result["rewritten_code"]), config.normalize_options)
-    notes = str(result["notes"]).strip()
-    if rewritten_code.strip() == baseline_text.strip():
-        notes += "\n\n[系统提示] 模型未产生与当前代码不同的结果，已保留原版本。"
-        rewritten_code = baseline_text
-
-    result["rewritten_code"] = rewritten_code
-    save_text(output_dir / f"fix_result_test_round{round_index}.json",
-              json.dumps(result, ensure_ascii=False, indent=2))
-    fixed_path = output_dir / f"fixed_target_test_round{round_index}.h"
-    save_text(fixed_path, rewritten_code)
-    save_text(output_dir / f"fix_notes_test_round{round_index}.md", notes)
-    return fixed_path, rewritten_code
 
 
 def build_test_artifact_fix_request(
@@ -328,7 +346,7 @@ def run_test_artifact_fix(
 
     toolbox 非空且客户端支持时，模型可先调用工具取证/自检再产出修复（P1）。
     """
-    output_dir = config.output_dir
+    output_dir = config.fix_output_dir
     spec_json = (
         json.dumps(kernel_spec, ensure_ascii=False, indent=2)
         if kernel_spec

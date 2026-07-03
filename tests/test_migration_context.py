@@ -164,6 +164,9 @@ def test_build_migration_context_pack_from_fixture(tmp_path):
         "__algorithm/pred.h",
     ]
 
+    # pred.h (all_of 的直接依赖) 在目标仓尚无产物 → 不注入其 ASCL 内容。
+    assert pack["migrated_accl_dependencies"] == []
+
     assert pack["existing_accl_counterpart"]["exists"] is True
     assert pack["existing_accl_counterpart"]["target_relpath"] == (
         "asc-stl/include/asc/std/__algorithm/all_of.h"
@@ -187,6 +190,59 @@ def test_build_migration_context_pack_from_fixture(tmp_path):
     assert pack["ledger_status_evidence"]["entry_status"]["status"] == "generated"
     assert pack["ledger_status_evidence"]["ledger_entries"][0]["key"] == "__algorithm/all_of.h"
     assert pack["bounds"]["target_repo"] == str(target.resolve())
+
+
+def test_migrated_accl_dependencies_injects_existing_dep_content(tmp_path):
+    """已迁移的直接依赖（ASCL 侧文件已落盘）应把其真实内容注入 context pack。"""
+    _, target, inventory, test_index, dep_graph, status_report = _build_reports(tmp_path)
+    examples = _seed_examples(tmp_path)
+
+    # __algorithm/pred.h 直接依赖 __utility/move.h，其 ASCL 目标文件已存在于 _seed_target。
+    pack = build_migration_context_pack(
+        entry_header="__algorithm/pred.h",
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status_report,
+        target_repo=target,
+        examples_root=examples,
+    )
+
+    deps = pack["migrated_accl_dependencies"]
+    assert [dep["source_header"] for dep in deps] == ["__utility/move.h"]
+    move_dep = deps[0]
+    assert move_dep["target_relpath"] == "asc-stl/include/asc/std/__utility/move.h"
+    assert move_dep["content"]["exists"] is True
+    assert "move" in move_dep["content"]["text"]
+
+
+def test_migrated_accl_dependencies_dedupes_against_siblings(tmp_path):
+    """直接依赖若与本头同目录（已被 nearby siblings 覆盖），不在 deps 里重复占用预算。"""
+    _, target, inventory, test_index, dep_graph, status_report = _build_reports(tmp_path)
+    examples = _seed_examples(tmp_path)
+
+    # all_of.h 直接依赖 __algorithm/pred.h（同目录）；即便 pred.h 有产物也不应重复注入。
+    pred_target = (
+        target / "asc-stl" / "include" / "asc" / "std" / "__algorithm" / "pred.h"
+    )
+    pred_target.write_text("// generated pred\n", encoding="utf-8")
+
+    pack = build_migration_context_pack(
+        entry_header="__algorithm/all_of.h",
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        status_report=status_report,
+        target_repo=target,
+        examples_root=examples,
+    )
+
+    sibling_relpaths = {
+        sibling["target_relpath"] for sibling in pack["nearby_accl_sibling_headers"]
+    }
+    assert "asc-stl/include/asc/std/__algorithm/pred.h" in sibling_relpaths
+    dep_relpaths = {dep["target_relpath"] for dep in pack["migrated_accl_dependencies"]}
+    assert dep_relpaths.isdisjoint(sibling_relpaths)
 
 
 def test_write_migration_context_pack_is_deterministic_json(tmp_path):

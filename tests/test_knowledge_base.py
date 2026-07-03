@@ -19,12 +19,15 @@ def _kb() -> KnowledgeBase:
 def test_loads_real_reference_knowledge_base():
     kb = _kb()
     assert not kb.is_empty
-    assert kb.symbols, "symbol_mapping.yaml 应有 symbols"
-    assert any(s.get("always_inject") for s in kb.symbols)
+    assert kb.layout == "manifest-v2"
+    assert kb.mappings, "manifest 注册的 mappings 应被加载"
+    assert any(s.get("always_inject") for s in kb.mappings)
     assert kb.segment_substitutions and kb.segment_substitutions[0]["from"] == "__cccl"
     assert kb.migration_policy.get("public_aggregation_headers")
-    assert kb.grammar_rules, "grammar_rules.yaml 应被加载"
-    assert kb.constraint_rules, "constraint_rules.yaml 应被加载"
+    assert kb.grammar_rules, "grammar 规则集应被加载"
+    assert kb.constraint_rules, "constraint 规则集应被加载"
+    assert kb.rule_sets.get("implicit_dependency"), "泛化隐含依赖规则应被加载"
+    assert kb.catalogs["runtime-api"]["path"].endswith("api-mapping/runtime_api.yaml")
 
 
 def test_render_block_injects_universal_symbol_mappings():
@@ -34,7 +37,7 @@ def test_render_block_injects_universal_symbol_mappings():
     assert "_ASC_AICORE_FN" in block
     assert "_LIBCUDACXX_BEGIN_NAMESPACE_STD" in block
     assert "_CUDA_VSTD::" in block
-    assert "符号 / 宏 / 命名空间映射" in block
+    assert "具体映射事实" in block
 
 
 def test_grammar_rule_fires_on_device_qualifier():

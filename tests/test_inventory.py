@@ -14,6 +14,7 @@ from core.analysis.inventory import (
     parse_cuda_std_includes,
     resolve_cccl_repo,
     scan_header_inventory,
+    scan_implicit_dependencies,
     scan_symbol_dependencies,
     write_inventory_report,
 )
@@ -92,6 +93,41 @@ def test_scan_symbol_dependencies_uses_identifier_boundaries():
         [{"symbol": "_CUDA_VSTD::move", "header": "__utility/move.h", "include": "cuda/std/__utility/move.h"}],
     )
 
+    assert hits == []
+
+
+def test_generic_qualified_symbol_rule_resolves_provider_from_header_index():
+    rule = {
+        "pattern": r"(?:_CUDA_VSTD|(?:::)?cuda::std)::(?P<symbol>[A-Za-z_]\w*)",
+        "resolver": "header_stem",
+        "symbol_group": "symbol",
+        "prefix_fallback": True,
+        "provider_modules": ["__utility"],
+    }
+    known = ["__utility/move.h", "__utility/forward.h", "__algorithm/move.h"]
+    hits = scan_implicit_dependencies(
+        "auto a = ::cuda::std::move_if_noexcept(x); auto b = cuda::std::forward<T>(x);",
+        [rule],
+        known_headers=known,
+    )
+
+    assert [(hit.symbol, hit.header) for hit in hits] == [
+        ("cuda::std::forward", "__utility/forward.h"),
+        ("::cuda::std::move_if_noexcept", "__utility/move.h"),
+    ]
+
+
+def test_generic_dependency_rule_does_not_create_self_edge():
+    rule = {
+        "pattern": r"_CUDA_VSTD::(?P<symbol>[A-Za-z_]\w*)",
+        "resolver": "header_stem",
+    }
+    hits = scan_implicit_dependencies(
+        "return _CUDA_VSTD::move(x);",
+        [rule],
+        known_headers=["__utility/move.h"],
+        current_header="__utility/move.h",
+    )
     assert hits == []
 
 

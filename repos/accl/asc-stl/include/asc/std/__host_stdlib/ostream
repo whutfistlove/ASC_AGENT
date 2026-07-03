@@ -1,0 +1,17 @@
+#ifndef ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_OSTREAM_
+#define ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_OSTREAM_
+
+#include "asc/std/__config"
+
+#if defined(__CCE__)
+#define ASC_DEVICE_CODE
+#else
+#include <ostream>
+#endif
+
+// [MIGRATION NOTE] The original CCCL header conditionally included the host's
+// <ostream> via _CCCL_HOSTED(). ASC-STL does not have _CCCL_HOSTED, so we
+// include <ostream> directly on the host side. On the device side, <ostream>
+// is not available.
+
+#endif // ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_OSTREAM_

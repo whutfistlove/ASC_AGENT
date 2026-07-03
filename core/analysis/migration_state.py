@@ -167,11 +167,20 @@ class MigrationStateStore:
         for source_header, entry in self.headers.items():
             if entry.status not in VALIDATED_STATUSES:
                 continue
-            if entry.source_sha:
-                src = root / source_header
-                if not src.is_file():
-                    continue
-                if source_sha(src.read_text(encoding="utf-8", errors="replace")) != entry.source_sha:
-                    continue
-            out[source_header] = entry.status
+            # 跨层桥接：整树(cuda 根)扫描把 std 头键作 `std/...`，而 std 层迁移记录的是
+            # `__algorithm/...`。除原键外再尝试 `std/<键>` 别名（仅当该路径存在且源哈希一致），
+            # 让 std 层已验证进度在整树计划里仍被识别为已完成。单层扫描下别名路径不存在，无副作用。
+            keys = [source_header]
+            if not source_header.startswith("std/"):
+                keys.append("std/" + source_header)
+            for key in keys:
+                if entry.source_sha:
+                    src = root / key
+                    if not src.is_file():
+                        continue
+                    if source_sha(src.read_text(encoding="utf-8", errors="replace")) != entry.source_sha:
+                        continue
+                elif key != source_header:
+                    continue  # 旧的无哈希条目不臆造别名
+                out[key] = entry.status
         return out

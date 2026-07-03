@@ -431,14 +431,57 @@ def extract_json_object(text: str, *, strict: bool = False) -> dict:
     if fence:
         cleaned = fence.group(1).strip()
 
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    # 先尝试整体解析（最常见：模型只吐了一个 JSON 对象）。
+    try:
+        obj = json.loads(cleaned)
+    except json.JSONDecodeError:
+        obj = None
+    if isinstance(obj, dict):
+        return obj
+
+    # 否则从第一个 '{' 起做「括号配平」扫描（尊重字符串与转义），取首个完整对象。
+    # 比旧的 find('{')…rfind('}') 切片更稳：模型在 JSON 前后夹带含 } 的散文时不会过界误切。
+    obj = _first_balanced_json_object(cleaned)
+    if obj is None:
         raise ValueError("模型输出中未找到合法 JSON 对象")
-    obj = json.loads(cleaned[start : end + 1])
     if not isinstance(obj, dict):
         raise ValueError(f"模型输出 JSON 必须是对象，实际为: {type(obj).__name__}")
     return obj
+
+
+def _first_balanced_json_object(text: str):
+    """返回 `text` 中第一个括号配平的 JSON 对象（解析失败/无对象返回 None）。
+
+    扫描时跟踪字符串与转义状态，故字符串字面量里的 ``{ } "`` 不影响配平计数。
+    """
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = False
+        escaped = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except json.JSONDecodeError:
+                        break  # 这个 '{' 配平了但不是合法 JSON，换下一个 '{'
+        start = text.find("{", start + 1)
+    return None
 
 
 _DIRECTIVE_RE = re.compile(

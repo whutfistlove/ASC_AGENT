@@ -11,13 +11,13 @@
 **完全同构**，迁移只做「前缀替换 + 厂商词改名」，心智负担最小，也便于把上游 libcudacxx 整仓直接
 落到 `repos/cccl/libcudacxx/` 作源参照。
 
-这套布局与代码实现完全一致（路径前缀在 `config/settings.yaml`，段替换/迁移策略在 `reference/symbol_mapping.yaml`）：
+这套布局与代码实现完全一致（路径前缀在 `config/settings.yaml`，知识源由 `reference/manifest.yaml` 注册）：
 
 | 维度 | 本文布局（镜像 libcudacxx） | 代码实现 |
 |---|---|---|
 | 源前缀 | `libcudacxx/include/cuda/std/...` | `libcudacxx/include/cuda/std`（`mapping.source_repo_prefix`） |
 | 目标前缀 | `asc-stl/include/asc/std/...` | `asc-stl/include/asc/std`（`mapping.target_repo_prefix`） |
-| 底层配置目录 | `asc/std/__asc/`（⟵ `cuda/std/__cccl/`） | `asc/std/__asc/`（`reference/symbol_mapping.yaml segment_substitutions: __cccl→__asc`） |
+| 底层配置目录 | `asc/std/__asc/`（⟵ `cuda/std/__cccl/`） | `asc/std/__asc/`（`reference/mappings/path_segments.yaml`） |
 
 路径/命名映射已**完全配置化**（`mapping.target_repo_prefix` / reference `segment_substitutions` 驱动
 `core/analysis/path_mapper.py`；迁移策略走 reference `migration_policy`），所以「布局即配置」：上表两列恒等，
@@ -428,6 +428,5 @@ include/
 - 跨树配置仍在 `asc/std/__asc/`（对位 `cuda/std/__cccl/`），仅做 `__cccl → __asc` 改名，不外置为 `common/`。
 - 顶层只保留 `asc/`（⟵ `cuda/`）与 `ascend/`（⟵ `nv/`）两个目录。
 
-这与 `config/settings.yaml` 的 `target_repo_prefix`、`reference/symbol_mapping.yaml` 的
+这与 `config/settings.yaml` 的 `target_repo_prefix`、`reference/mappings/path_segments.yaml` 的
 `segment_substitutions: __cccl→__asc` 以及 `repos/accl/` 实际产物**三方一致**：迁移链路只做前缀替换与厂商词改名，最易跟随上游、最易回归。
-

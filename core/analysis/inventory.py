@@ -6,6 +6,8 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from fnmatch import fnmatch
+from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -44,6 +46,8 @@ def build_include_re(namespace: str = DEFAULT_INCLUDE_NAMESPACE) -> "re.Pattern[
 
 
 _INCLUDE_LINE_RE = build_include_re()  # 默认 cuda/std
+# 任意 include 目标（`<...>` 或 `"..."`），不限命名空间——用于全量依赖列举（含系统头）。
+_ANY_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]\s*([^>"]+?)\s*[>"]')
 _PP_DIRECTIVE_RE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
 
 
@@ -161,19 +165,161 @@ def _symbol_occurs(searchable: str, symbol: str) -> bool:
     return pattern.search(searchable) is not None
 
 
-def scan_symbol_dependencies(
+def _header_stem(header: str) -> str:
+    name = Path(header).name
+    return name.rsplit(".", 1)[0] if "." in name else name
+
+
+@lru_cache(maxsize=8)
+def _provider_index(known_headers: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
+    by_stem: dict[str, list[str]] = {}
+    for header in known_headers:
+        by_stem.setdefault(_header_stem(header), []).append(header)
+    return {stem: tuple(sorted(headers)) for stem, headers in by_stem.items()}
+
+
+def _resolve_header_stem_provider(
+    symbol: str,
+    rule: Mapping,
+    known_headers: Sequence[str],
+    *,
+    current_header: str = "",
+) -> str | None:
+    """Resolve a qualified symbol to a provider using the source-tree header index.
+
+    Exact filename matches win.  If enabled, ``move_if_noexcept``-style names
+    fall back to the longest header-stem prefix (``move.h``).  Module priority
+    breaks otherwise ambiguous matches; an unresolved tie is deliberately
+    ignored instead of inventing an edge.
+    """
+    header_tuple = tuple(known_headers)
+    index = _provider_index(header_tuple)
+    # A qualified recursive/overload call inside the same-stem header is local;
+    # do not redirect it to another module that happens to share the basename.
+    if current_header and _header_stem(current_header) == symbol:
+        return None
+    overrides = rule.get("provider_overrides") or {}
+    override = str(overrides.get(symbol) or "") if isinstance(overrides, Mapping) else ""
+    if override and override in header_tuple and override != current_header:
+        return override
+    provider_modules = {str(x).strip("/") for x in (rule.get("provider_modules") or [])}
+
+    def allowed(header: str) -> bool:
+        if not provider_modules:
+            return True
+        module = header.split("/", 1)[0] if "/" in header else ""
+        return module in provider_modules
+
+    patterns = rule.get("header_globs") or ["**/{symbol}.h", "**/{symbol}"]
+    patterns = [str(p).format(symbol=symbol) for p in patterns]
+    candidates = [
+        h for h in index.get(symbol, ())
+        if h != current_header and allowed(h) and any(fnmatch(h, pattern) for pattern in patterns)
+    ]
+    matched_stem = symbol
+    if not candidates and rule.get("prefix_fallback", False):
+        stems = {
+            stem for stem in index
+            if len(stem) >= int(rule.get("minimum_prefix_length", 3))
+            and symbol.startswith(stem + "_")
+            and any(allowed(h) for h in index.get(stem, ()))
+        }
+        if stems:
+            matched_stem = max(stems, key=len)
+            candidates = [
+                h for h in index.get(matched_stem, ()) if h != current_header and allowed(h)
+            ]
+    if not candidates:
+        return None
+
+    priorities = [str(x).strip("/") for x in (rule.get("module_priority") or [])]
+
+    def rank(header: str) -> tuple[int, int, str]:
+        module = header.split("/", 1)[0] if "/" in header else ""
+        priority = priorities.index(module) if module in priorities else len(priorities)
+        exact = 0 if _header_stem(header) == symbol else 1
+        return (exact, priority, header)
+
+    ordered = sorted(candidates, key=rank)
+    best = rank(ordered[0])[:2]
+    if len(ordered) > 1 and rank(ordered[1])[:2] == best:
+        return None
+    return ordered[0]
+
+
+def _generic_dependency_hits(
+    searchable: str,
+    rule: Mapping,
+    known_headers: Sequence[str],
+    *,
+    namespace: str,
+    current_header: str,
+) -> list[SymbolDependencyHit]:
+    pattern_text = str(rule.get("pattern") or "")
+    if not pattern_text:
+        return []
+    try:
+        pattern = re.compile(pattern_text)
+    except re.error:
+        return []
+    resolver = str(rule.get("resolver") or "")
+    if resolver != "header_stem":
+        return []
+    group = str(rule.get("symbol_group") or "symbol")
+    out: list[SymbolDependencyHit] = []
+    for match in pattern.finditer(searchable):
+        try:
+            symbol_name = match.group(group)
+        except (IndexError, KeyError):
+            continue
+        header = _resolve_header_stem_provider(
+            symbol_name, rule, known_headers, current_header=current_header
+        )
+        if not header:
+            continue
+        include_template = str(rule.get("include_template") or "{namespace}/{header}")
+        include = include_template.format(
+            namespace=namespace.strip("/"), header=header, symbol=symbol_name
+        )
+        out.append(SymbolDependencyHit(
+            symbol=match.group(0),
+            include=include,
+            header=header,
+            kind=str(rule.get("kind") or "qualified-name"),
+        ))
+    return out
+
+
+def scan_implicit_dependencies(
     text: str,
     rules: Sequence[Mapping] | None = None,
     *,
     namespace: str = DEFAULT_INCLUDE_NAMESPACE,
+    known_headers: Sequence[str] | None = None,
+    current_header: str = "",
 ) -> list[SymbolDependencyHit]:
-    """Detect source-code symbol references that imply in-tree headers."""
+    """Detect explicit or generalized source-symbol dependencies.
+
+    Concrete v1 rules (``symbol`` + ``header``) remain supported.  Generalized
+    rules use a regex capture plus a provider resolver and therefore cover new
+    qualified symbols without adding one YAML row per spelling.
+    """
     if not rules:
         return []
     searchable = _strip_comments_and_literals(text)
     hits: dict[tuple[str, str], SymbolDependencyHit] = {}
     for rule in rules:
-        symbol = str(rule.get("symbol") or rule.get("pattern") or "")
+        if rule.get("resolver"):
+            for hit in _generic_dependency_hits(
+                searchable,
+                rule,
+                known_headers or (),
+                namespace=namespace,
+                current_header=current_header,
+            ):
+                hits[(hit.symbol, hit.header)] = hit
+            continue
+        symbol = str(rule.get("symbol") or "")
         include = _symbol_rule_include(rule, namespace)
         header = _symbol_rule_header(rule, namespace)
         if not symbol or not include or not header:
@@ -188,6 +334,24 @@ def scan_symbol_dependencies(
             kind=kind,
         )
     return sorted(hits.values(), key=lambda item: (item.header, item.symbol))
+
+
+def scan_symbol_dependencies(
+    text: str,
+    rules: Sequence[Mapping] | None = None,
+    *,
+    namespace: str = DEFAULT_INCLUDE_NAMESPACE,
+    known_headers: Sequence[str] | None = None,
+    current_header: str = "",
+) -> list[SymbolDependencyHit]:
+    """Compatibility alias for the v1 function name."""
+    return scan_implicit_dependencies(
+        text,
+        rules,
+        namespace=namespace,
+        known_headers=known_headers,
+        current_header=current_header,
+    )
 
 
 def _eval_pp_condition(keyword: str, expr: str) -> tuple[bool, bool]:
@@ -210,7 +374,21 @@ def scan_cuda_std_includes(text: str, include_re: "re.Pattern[str] | None" = Non
 
     `include_re` 缺省用 cuda/std；扩展层传 `build_include_re("cuda")` 即可改匹配命名空间。
     """
-    include_re = include_re or _INCLUDE_LINE_RE
+    return _scan_includes_with(text, include_re or _INCLUDE_LINE_RE)
+
+
+def scan_all_includes(text: str) -> IncludeScan:
+    """预处理感知地扫描**所有** include（含系统头 `<errno.h>`、跨命名空间头等），不做命名空间过滤。
+
+    与 :func:`scan_cuda_std_includes` 完全相同的 `#if` 栈 / `#if 0` 死分支处理，区别仅在于匹配
+    任意 include 目标。返回的 active/conditional/dead 里是**原始 include 目标串**（如 `errno.h`、
+    `cuda/std/__chrono/duration.h`），供「列出一个头的全部依赖（库内 + 系统/外部）」使用。
+    """
+    return _scan_includes_with(text, _ANY_INCLUDE_RE)
+
+
+def _scan_includes_with(text: str, include_re: "re.Pattern[str]") -> IncludeScan:
+    """共享的预处理感知 include 扫描核心；按 `include_re` 捕获组 1 作为依赖串。"""
     frames: list[dict] = []  # 每个 #if 块：{active, taken, is_guard}
     active: list[str] = []
     conditional: list[str] = []
@@ -376,12 +554,19 @@ def _header_entry(
     *,
     include_re: "re.Pattern[str] | None" = None,
     namespace: str = DEFAULT_INCLUDE_NAMESPACE,
-    symbol_dependency_rules: Sequence[Mapping] | None = None,
+    implicit_dependency_rules: Sequence[Mapping] | None = None,
+    known_headers: Sequence[str] | None = None,
 ) -> HeaderInventoryEntry:
     relative_path = path.relative_to(header_root).as_posix()
     text = path.read_text(encoding="utf-8", errors="replace")
     scan = scan_cuda_std_includes(text, include_re)
-    symbol_hits = scan_symbol_dependencies(text, symbol_dependency_rules, namespace=namespace)
+    symbol_hits = scan_implicit_dependencies(
+        text,
+        implicit_dependency_rules,
+        namespace=namespace,
+        known_headers=known_headers,
+        current_header=relative_path,
+    )
     return HeaderInventoryEntry(
         relative_path=relative_path,
         module=infer_header_module(relative_path),
@@ -398,9 +583,17 @@ def scan_header_inventory(
     cccl_repo: str | Path | None = None,
     *,
     include_root_rel: str | Path = HEADER_ROOT_REL,
+    implicit_dependency_rules: Sequence[Mapping] | None = None,
     symbol_dependency_rules: Sequence[Mapping] | None = None,
 ) -> HeaderInventoryReport:
-    """Scan `libcudacxx/include/cuda/std` without modifying the CCCL repository."""
+    """Scan headers without modifying CCCL.
+
+    ``symbol_dependency_rules`` is the deprecated v1 keyword; generalized
+    callers should pass ``implicit_dependency_rules``.
+    """
+    rules = implicit_dependency_rules
+    if rules is None:
+        rules = symbol_dependency_rules
     repo = resolve_cccl_repo(cccl_repo)
     header_root = repo / Path(include_root_rel)
     if not header_root.is_dir():
@@ -409,11 +602,13 @@ def scan_header_inventory(
     namespace = namespace_for_root(include_root_rel)
     include_re = build_include_re(namespace)
     paths = sorted(p for p in header_root.rglob("*") if p.is_file() and not is_env_file(p))
+    known_headers = tuple(p.relative_to(header_root).as_posix() for p in paths)
     headers = [
         _header_entry(
             p, header_root,
             include_re=include_re, namespace=namespace,
-            symbol_dependency_rules=symbol_dependency_rules,
+            implicit_dependency_rules=rules,
+            known_headers=known_headers,
         )
         for p in paths
     ]

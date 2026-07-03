@@ -1,0 +1,81 @@
+- cccl: "_CCCL_BEGIN_NAMESPACE_CUDA_STD"
+  asc: "_ASC_STD_BEGIN"
+  status: mapped
+  always_inject: true
+  note: "命名空间起始宏"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "_CCCL_END_NAMESPACE_CUDA_STD"
+  asc: "_ASC_STD_END"
+  status: mapped
+  always_inject: true
+  note: "命名空间结束宏"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "_LIBCUDACXX_BEGIN_NAMESPACE_STD"
+  asc: "_ASC_STD_BEGIN"
+  status: mapped
+  always_inject: true
+  note: "新版 libcudacxx 命名空间起始宏"
+  source: ["examples/headers/sort3.accl.h", "examples/headers/quad_fanout.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-19"
+
+- cccl: "_LIBCUDACXX_END_NAMESPACE_STD"
+  asc: "_ASC_STD_END"
+  status: mapped
+  always_inject: true
+  note: "新版 libcudacxx 命名空间结束宏"
+  source: ["examples/headers/sort3.accl.h", "examples/headers/quad_fanout.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-19"
+
+- cccl: "_CCCL_API"
+  asc: "_ASC_AICORE_FN"
+  status: mapped
+  always_inject: true
+  note: "设备/通用函数修饰宏"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "_CUDA_STD_<...>_H  (header guard)"
+  asc: "ASC_STL_INCLUDE_ASC_STD_<...>_H_  (header guard)"
+  status: partial
+  always_inject: true
+  note: "实际 guard 必须使用 path_mapper 生成的 expected_header_guard"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "_CCCL_EXEC_CHECK_DISABLE"
+  asc: "(删除)"
+  status: removed
+  always_inject: true
+  note: "ASC-STL 无对应执行空间诊断抑制宏"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "#include <cuda/std/__cccl/prologue.h> / <cuda/std/__cccl/epilogue.h>"
+  asc: "(删除)"
+  status: removed
+  always_inject: true
+  note: "ASC-STL 不使用 CCCL 的 prologue/epilogue 配对"
+  source: ["examples/headers/max.cccl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "_CCCL_IMPLICIT_SYSTEM_HEADER_* 的 #pragma system_header 块"
+  asc: "(删除，设备分支使用 __CCE__)"
+  status: removed
+  always_inject: true
+  note: "删除 CCCL 系统头 pragma 块"
+  source: ["examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+

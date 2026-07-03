@@ -72,7 +72,7 @@ def test_test_artifact_fix_ignores_json_null_host_test_code(tmp_path):
 
     assert out["header_code"] == "// fixed\n"
     assert "host_test_code" not in out
-    saved = json.loads((cfg.output_dir / "fix_result_test_round1.json").read_text(encoding="utf-8"))
+    saved = json.loads((cfg.fix_output_dir / "fix_result_test_round1.json").read_text(encoding="utf-8"))
     assert "host_test_code" not in saved
 
 

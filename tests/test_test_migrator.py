@@ -11,12 +11,79 @@ from core.common.config import Config
 from core.llm.model_client import MockModelClient
 from core.testing.test_migrator import (
     default_test_plan_filename,
+    ensure_host_test_compiles,
     migrate_operator_tests,
     plan_upstream_tests_for_header,
     validate_host_test_code,
     validate_kernel_spec,
     write_upstream_test_plan_report,
 )
+
+_VALID_HOST = '#include "x.h"\n#include <cassert>\nint main(){ assert(1 == 1); return 0; }\n'
+
+
+class _FakeToolbox:
+    """最小桩：按预设序列返回 host_syntax_check 结果，记录调用。"""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls: list[str] = []
+
+    def host_syntax_check(self, code: str) -> str:
+        self.calls.append(code)
+        return self._results.pop(0)
+
+
+def test_ensure_host_test_compiles_repairs_syntax_error(tmp_path):
+    tb = _FakeToolbox(["FAILED：\nsnippet.cpp:30: error: expected ';' before 'int'", "OK：语法通过"])
+    model = MockModelClient(responses=[json.dumps({"host_test_code": _VALID_HOST, "notes": "加分号"})])
+
+    code, info = ensure_host_test_compiles(
+        model, "int main(){} // broken", toolbox=tb,
+        output_dir=tmp_path, algo_name="ctad_support", rounds=2, verbose=False,
+    )
+
+    assert info["passed"] is True
+    assert info["attempts"] == 1
+    assert "assert(1 == 1)" in code
+    assert len(tb.calls) == 2  # 初检失败 -> 修复 -> 复检通过
+
+
+def test_ensure_host_test_compiles_skips_without_compiler(tmp_path):
+    tb = _FakeToolbox(["[host_syntax_check] 未找到编译器 g++，无法自检（跳过）。"])
+    model = MockModelClient(responses=[])  # 不应被调用
+
+    code, info = ensure_host_test_compiles(
+        model, "orig", toolbox=tb, output_dir=tmp_path, algo_name="x", rounds=2, verbose=False,
+    )
+
+    assert info.get("no_compiler") is True
+    assert code == "orig"
+    assert model.calls == []
+
+
+def test_ensure_host_test_compiles_noop_without_toolbox(tmp_path):
+    code, info = ensure_host_test_compiles(
+        MockModelClient(responses=[]), "orig", toolbox=None,
+        output_dir=tmp_path, algo_name="x", rounds=2, verbose=False,
+    )
+    assert info["checked"] is False
+    assert code == "orig"
+
+
+def test_ensure_host_test_compiles_skips_repair_on_header_side_error(tmp_path):
+    # 诊断指向被包含头（非 snippet.cpp）-> 测试改不了，不回灌模型，交给下游测试反馈。
+    tb = _FakeToolbox(["FAILED：\nasc/std/__numeric/gcd.h:5: error: ‘foo’ was not declared"])
+    model = MockModelClient(responses=[])
+
+    code, info = ensure_host_test_compiles(
+        model, "orig", toolbox=tb, output_dir=tmp_path, algo_name="x", rounds=2, verbose=False,
+    )
+
+    assert info.get("header_side") is True
+    assert code == "orig"
+    assert len(tb.calls) == 1
+    assert model.calls == []
 
 
 def _cfg(tmp_path) -> Config:
@@ -221,7 +288,7 @@ def test_migrate_operator_tests_parses_contract(tmp_path):
     req = model.calls[0]["user_content"]
     assert "测试迁移示例" in req and "swap" in req
     # 调试产物落盘。
-    assert (cfg.output_dir / "test_migrate_result.json").exists()
+    assert (cfg.model_output_dir / "test_migrate_result.json").exists()
 
 
 def test_migrate_operator_tests_uses_real_test_index_plan_in_prompt(tmp_path):
@@ -272,7 +339,7 @@ def test_migrate_operator_tests_uses_real_test_index_plan_in_prompt(tmp_path):
     assert "legacy should be replaced" not in req
     assert "max.verify.cpp [verify; verify-deferred]" in req
     assert "max.fail.cpp [fail; compile-fail]" in req
-    saved = json.loads((cfg.output_dir / "test_migrate_result.json").read_text(encoding="utf-8"))
+    saved = json.loads((cfg.model_output_dir / "test_migrate_result.json").read_text(encoding="utf-8"))
     assert saved["upstream_test_plan"]["selected_test_count"] == 1
 
 

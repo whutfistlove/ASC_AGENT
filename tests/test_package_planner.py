@@ -203,6 +203,81 @@ def test_headers_for_batch_selectors(tmp_path):
     assert headers_for_batch(plan, "__foo/top.h,__foo/unknown.h", set()) == ["__foo/top.h"]
 
 
+def _seed_two_layer_repo(tmp_path: Path) -> Path:
+    """A cuda/std header + a cuda extension header that depends on it (cross-layer)."""
+    cccl = tmp_path / "cccl"
+    cuda = cccl / "libcudacxx" / "include" / "cuda"
+    std_foo = cuda / "std" / "__foo"
+    std_cccl = cuda / "std" / "__cccl"
+    ext = cuda / "__bar"
+    test_root = cccl / "libcudacxx" / "test" / "libcudacxx" / "cuda"
+    std_foo.mkdir(parents=True)
+    std_cccl.mkdir(parents=True)
+    ext.mkdir(parents=True)
+    test_root.mkdir(parents=True)
+    (std_foo / "base.h").write_text("template <class T> T base(T x){ return x; }\n", encoding="utf-8")
+    (std_cccl / "support.h").write_text("// upstream support\n", encoding="utf-8")
+    # Extension header reaches across into the cuda/std layer.
+    (ext / "uses_std.h").write_text(
+        '#include <cuda/std/__foo/base.h>\ntemplate <class T> T bar(T x){ return base(x); }\n',
+        encoding="utf-8",
+    )
+    return cccl
+
+
+def test_package_plan_orders_cross_layer_dependencies(tmp_path):
+    """Whole-tree (cuda root) analysis must order cuda/std deps before cuda extension users."""
+    cccl = _seed_two_layer_repo(tmp_path)
+    # cuda-root mapping (cuda -> asc), like config/settings.cuda.yaml / --all-layers.
+    cfg = Config.load(
+        None,
+        project_root=tmp_path,
+        overrides={
+            "paths": {"accl_repo": str(tmp_path / "accl"), "output_dir": str(tmp_path / "outputs")},
+            "mapping": {
+                "source_repo_prefix": "libcudacxx/include/cuda",
+                "target_repo_prefix": "asc-stl/include/asc",
+                "cccl_test_prefix": "libcudacxx/test/libcudacxx/cuda",
+            },
+        },
+    )
+    root = cfg.source_repo_prefix
+    inventory = scan_header_inventory(cccl, include_root_rel=root)
+    test_index = scan_test_index(cccl, include_root_rel=root, test_root_rel=cfg.cccl_test_prefix)
+    dep_graph = scan_dependency_graph(cccl, include_root_rel=root)
+    status = build_migration_status_report(
+        inventory=inventory,
+        test_index=test_index,
+        dep_graph=dep_graph,
+        target_repo=cfg.target_repo,
+        target_repo_prefix=cfg.target_repo_prefix,
+        segment_substitutions=cfg.segment_substitutions,
+        policy=cfg.migration_policy,
+    )
+    plan = build_package_plan_payload(
+        config=cfg,
+        inventory=inventory,
+        dep_graph=dep_graph,
+        test_index=test_index,
+        status_report=status,
+    )
+
+    batch_of = _batch_of(plan)
+    # Both layers present; std dep migrated before the extension header that needs it.
+    assert "std/__foo/base.h" in batch_of
+    assert "__bar/uses_std.h" in batch_of
+    assert batch_of["std/__foo/base.h"] == "batch-1"
+    assert batch_of["__bar/uses_std.h"] == "batch-2"
+    # std target maps to asc/std/..., extension maps to asc/... — both correct under one plan.
+    by_header = {item["source_header"]: item for b in plan["batches"] for item in b["headers"]}
+    assert by_header["std/__foo/base.h"]["target_relpath"] == "asc-stl/include/asc/std/__foo/base.h"
+    assert by_header["__bar/uses_std.h"]["target_relpath"] == "asc-stl/include/asc/__bar/uses_std.h"
+    # Layer-aware policy: cuda/std infra under the cuda root is still deferred (not waved).
+    deferred = {e["source_header"] for e in plan["deferred_headers"]}
+    assert "std/__cccl/support.h" in deferred
+    assert "std/__cccl/support.h" not in batch_of
+
+
 def test_write_package_plan_rejects_pathy_names(tmp_path):
     cccl = _seed_repo(tmp_path)
     cfg = _config(tmp_path)

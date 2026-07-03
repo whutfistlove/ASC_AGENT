@@ -7,7 +7,7 @@ hook 检查文案、__cccl→__asc 这种隐式重命名等）。
     1. 内置 DEFAULTS
     2. config/settings.yaml（用户可选，缺省项自动回退到 DEFAULTS）
     3. 运行期注入变量 / CLI 覆盖
-    4. reference/symbol_mapping.yaml 的迁移策略（segment_substitutions / migration_policy）
+    4. reference/manifest.yaml 注册的策略与泛化规则
 
 所有字符串里的 ${VAR} 与 ${VAR:-default} 都会被展开，可引用：
     - 进程环境变量
@@ -26,12 +26,14 @@ from typing import Any, Optional
 
 import yaml
 
+from core.knowledge.reference_loader import load_reference_bundle
+
 # ${VAR} 或 ${VAR:-default}；只匹配最内层（不含花括号），便于处理嵌套默认值
 _ENV_PATTERN = re.compile(r"\$\{([^{}]+)\}")
 
 
-# reference/symbol_mapping.yaml 是迁移策略的事实源；这里的 fallback 只用于临时测试项目或
-# reference 缺失的降级场景，真实项目加载时会被 reference 覆盖。
+# reference/manifest.yaml 是知识源索引；这里的 fallback 只用于临时测试项目或
+# reference 缺失的降级场景，真实项目加载时会被 manifest 注册的数据覆盖。
 _FALLBACK_SEGMENT_SUBSTITUTIONS = [{"from": "__cccl", "to": "__asc"}]
 _FALLBACK_MIGRATION_POLICY: dict[str, Any] = {
     "deferred_upstream_support_prefixes": ["__cccl/", "__internal/", "__support/", "detail/"],
@@ -68,7 +70,7 @@ DEFAULTS: dict[str, Any] = {
         # <cccl_test_prefix>/<同样的子路径段>/<op>.pass.cpp。用于「同步迁移测试代码」。
         "cccl_test_prefix": "libcudacxx/test/libcudacxx/std",
         "cccl_test_suffix": ".pass.cpp",
-        # 由 reference/symbol_mapping.yaml 的 segment_substitutions 覆盖。
+        # 由 reference manifest 注册的 path-segment 映射覆盖。
         "segment_substitutions": copy.deepcopy(_FALLBACK_SEGMENT_SUBSTITUTIONS),
         "module_hint_fallback": "generic",
     },
@@ -90,9 +92,9 @@ DEFAULTS: dict[str, Any] = {
         "retrieval": True,            # 关掉则回退到 examples 配置顺序
         "top_k": 2,
     },
-    # 源码符号隐含依赖。真实项目会由 reference/symbol_mapping.yaml 覆盖。
+    # 源码隐含依赖泛化规则。真实项目会由 reference manifest 覆盖。
     "dependency_analysis": {
-        "symbol_dependencies": [],
+        "implicit_dependency_rules": [],
     },
     "repo_verify": {
         "conda_sh": "",               # 留空则自动探测
@@ -160,7 +162,7 @@ DEFAULTS: dict[str, Any] = {
         "fix_directive_spacing": True,
         "ensure_trailing_newline": True,
     },
-    # 由 reference/symbol_mapping.yaml 的 migration_policy 覆盖。
+    # 由 reference manifest 注册的 migration_policy 覆盖。
     "migration_policy": copy.deepcopy(_FALLBACK_MIGRATION_POLICY),
 }
 
@@ -250,21 +252,6 @@ def _deep_merge(base: dict, override: Optional[dict]) -> dict:
     return out
 
 
-def _reference_policy_yaml(reference_dir: Path) -> dict:
-    path = reference_dir / "symbol_mapping.yaml"
-    if not path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except OSError as exc:
-        raise ValueError(f"无法读取 reference 策略文件: {path}") from exc
-    except yaml.YAMLError as exc:
-        raise ValueError(f"reference 策略文件不是合法 YAML: {path}") from exc
-    if not isinstance(data, dict):
-        raise ValueError(f"reference 策略文件顶层必须是 mapping: {path}")
-    return data
-
-
 def _segment_substitution_contract(items: list | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for item in items or []:
@@ -277,34 +264,22 @@ def _segment_substitution_contract(items: list | None) -> list[dict[str, str]]:
     return out
 
 
-def _migration_policy_contract(raw: dict | None) -> dict:
-    policy = MigrationPolicy.from_raw(raw)
-    return {
-        "deferred_upstream_support_prefixes": list(policy.deferred_upstream_support_prefixes),
-        "bootstrap_manual_coverage": dict(policy.bootstrap_manual_coverage),
-        "target_only_compatibility_wrappers": sorted(policy.target_only_compatibility_wrappers),
-        "public_aggregation_headers": sorted(policy.public_aggregation_headers),
-    }
+def _implicit_dependency_contract(items: list | None) -> list[dict]:
+    """Normalize explicit and generalized implicit-dependency rules.
 
-
-def _symbol_dependency_contract(items: list | None) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
+    Legacy rules contain ``symbol`` + a concrete provider header.  Manifest-v2
+    rules may instead contain a regex ``pattern`` and a resolver such as
+    ``header_stem``.  Unknown audit fields are intentionally preserved so the
+    deterministic scanner can evolve without another Config schema change.
+    """
+    out: list[dict] = []
     for item in items or []:
         if not isinstance(item, dict):
             continue
-        symbol = item.get("symbol") or item.get("pattern")
-        header = item.get("header")
-        include = item.get("include")
-        if not symbol or not (header or include):
+        if not (item.get("symbol") or item.get("pattern")):
             continue
-        row = {
-            "symbol": str(symbol),
-            "kind": str(item.get("kind") or "symbol"),
-        }
-        if header:
-            row["header"] = str(header)
-        if include:
-            row["include"] = str(include)
+        row = copy.deepcopy(item)
+        row["kind"] = str(item.get("kind") or "symbol")
         out.append(row)
     return out
 
@@ -343,23 +318,39 @@ def _resolve_reference_dir(raw: dict, project_root: Path) -> Path:
 
 
 def _apply_reference_strategy(raw: dict, project_root: Path) -> None:
-    """Make reference/symbol_mapping.yaml the runtime source of migration strategy."""
-    reference = _reference_policy_yaml(_resolve_reference_dir(raw, project_root))
-    if not reference:
+    """Apply manifest-registered strategies and generic dependency rules.
+
+    The reference bundle is the source of truth for segment substitutions,
+    migration policy, and implicit-dependency rules.  Legacy ``symbol_mapping``
+    fixtures remain readable through the compatibility loader.
+    """
+    bundle = load_reference_bundle(_resolve_reference_dir(raw, project_root), strict=True)
+    if bundle.layout == "empty":
         return
 
-    segments = _segment_substitution_contract(reference.get("segment_substitutions"))
+    segments = _segment_substitution_contract(bundle.segment_substitutions)
     if not segments:
-        raise ValueError("reference/symbol_mapping.yaml 必须提供 segment_substitutions")
+        raise ValueError("reference 知识库必须提供 segment_substitutions")
     raw.setdefault("mapping", {})["segment_substitutions"] = segments
 
-    policy = reference.get("migration_policy")
+    policy = bundle.migration_policy
     if not isinstance(policy, dict):
-        raise ValueError("reference/symbol_mapping.yaml 必须提供 migration_policy")
+        raise ValueError("reference 知识库必须提供 migration_policy")
     raw["migration_policy"] = _reference_migration_policy_raw(policy)
 
-    raw.setdefault("dependency_analysis", {})["symbol_dependencies"] = _symbol_dependency_contract(
-        reference.get("symbol_dependencies")
+    implicit_rules = bundle.rules_of("implicit_dependency")
+    provider_catalog = bundle.catalogs.get("implicit-provider-overrides", {})
+    provider_overrides = {
+        str(row.get("symbol")): str(row.get("header"))
+        for row in provider_catalog.get("records", [])
+        if isinstance(row, dict) and row.get("symbol") and row.get("header")
+    }
+    if provider_overrides:
+        for rule in implicit_rules:
+            if rule.get("resolver") == "header_stem":
+                rule["provider_overrides"] = provider_overrides
+    raw.setdefault("dependency_analysis", {})["implicit_dependency_rules"] = _implicit_dependency_contract(
+        implicit_rules
     )
 
 
@@ -461,41 +452,11 @@ class Config:
         for c in checks:
             if "name" not in c or "pattern" not in c:
                 raise ValueError(f"repo_verify.checks 每项需包含 name 与 pattern: {c}")
-        self._validate_reference_consistency()
-
-    def _validate_reference_consistency(self) -> None:
-        """Ensure audited reference policy stays aligned with runtime config."""
-        reference = _reference_policy_yaml(self.reference_dir)
-        if not reference:
-            return
-
-        ref_segments = _segment_substitution_contract(reference.get("segment_substitutions"))
-        cfg_segments = _segment_substitution_contract(self.raw.get("mapping", {}).get("segment_substitutions"))
-        if ref_segments and cfg_segments != ref_segments:
-            raise ValueError(
-                "mapping.segment_substitutions 与 reference/symbol_mapping.yaml 不一致；"
-                "请先更新 reference 这个策略单一事实源。"
-            )
-
-        ref_policy_raw = reference.get("migration_policy")
-        if isinstance(ref_policy_raw, dict):
-            ref_policy = _migration_policy_contract(ref_policy_raw)
-            cfg_policy = _migration_policy_contract(self.raw.get("migration_policy"))
-            if cfg_policy != ref_policy:
-                raise ValueError(
-                    "migration_policy 与 reference/symbol_mapping.yaml 不一致；"
-                    "请保持 config 与 reference 策略同步。"
-                )
-
-        ref_symbol_deps = _symbol_dependency_contract(reference.get("symbol_dependencies"))
-        cfg_symbol_deps = _symbol_dependency_contract(
-            self.raw.get("dependency_analysis", {}).get("symbol_dependencies")
-        )
-        if ref_symbol_deps and cfg_symbol_deps != ref_symbol_deps:
-            raise ValueError(
-                "dependency_analysis.symbol_dependencies 与 reference/symbol_mapping.yaml 不一致；"
-                "请保持 reference 这个符号依赖事实源同步。"
-            )
+        # 注：迁移策略一致性无需在此复核——`_apply_reference_strategy` 已在 load 时把
+        # reference manifest 作为权威来源写入 raw（见其 docstring），settings/overrides
+        # 里的同名键被它覆盖（test_reference_*_override_config 锁定此语义）。先前这里的
+        # `_validate_reference_consistency` 在 apply 之后再读同一份 reference 比对，恒相等、
+        # 永不触发，是误导性的死代码 + 每次 load 多一次磁盘读，已删除。
 
     # ----- 便捷访问器 ----- #
     @property
@@ -503,6 +464,46 @@ class Config:
         raw = self.raw["paths"]["output_dir"]
         p = Path(raw)
         return p if p.is_absolute() else (self.project_root / p)
+
+    # ----- 输出二级目录（按产物类型分类；save_text 会自动建目录） ----- #
+    def output_subdir(self, category: str) -> Path:
+        """outputs/ 下按产物类型的二级目录。单一事实源，避免各处硬编码子目录名。"""
+        return self.output_dir / category
+
+    @property
+    def model_output_dir(self) -> Path:
+        """模型初稿交互：model_request/raw、rewritten_target、rewrite_*、test_migrate_*、tool_calls_*。"""
+        return self.output_subdir("model")
+
+    @property
+    def fix_output_dir(self) -> Path:
+        """修复迭代：fix_request/result/notes、fix_model_raw_*、fixed_target_*、post_hook_baseline*。"""
+        return self.output_subdir("fix")
+
+    @property
+    def tests_output_dir(self) -> Path:
+        """测试日志：host_test_<op>.log / kernel_test_<op>.log。"""
+        return self.output_subdir("tests")
+
+    @property
+    def reports_output_dir(self) -> Path:
+        """确定性分析报告：inventory / dep_graph / test_index / status / context / batch / dependency_convert。"""
+        return self.output_subdir("reports")
+
+    @property
+    def plans_output_dir(self) -> Path:
+        """迁移计划台账：folder_migration_plan.* / package_migration_plan.*。"""
+        return self.output_subdir("plans")
+
+    @property
+    def state_output_dir(self) -> Path:
+        """已验证迁移状态台账：migration_state.json。"""
+        return self.output_subdir("state")
+
+    @property
+    def repo_log_output_dir(self) -> Path:
+        """目标仓提交校验日志：git_commit*/git_push*/git_checkout/git_status*/clang_format*。"""
+        return self.output_subdir("repo")
 
     @property
     def reference_dir(self) -> Path:
@@ -516,8 +517,13 @@ class Config:
         return self.raw["paths"]["cccl_repo"]
 
     @property
+    def implicit_dependency_rules(self) -> list[dict]:
+        return copy.deepcopy(self.raw.get("dependency_analysis", {}).get("implicit_dependency_rules", []))
+
+    @property
     def symbol_dependency_rules(self) -> list[dict]:
-        return copy.deepcopy(self.raw.get("dependency_analysis", {}).get("symbol_dependencies", []))
+        """Compatibility alias; new code should use ``implicit_dependency_rules``."""
+        return self.implicit_dependency_rules
 
     @property
     def accl_repo(self) -> str:
@@ -552,6 +558,22 @@ class Config:
     @property
     def kernel_cannsim_soc_version(self) -> str:
         return str(self.raw.get("tests", {}).get("kernel_cannsim_soc_version", "Ascend950"))
+
+    @property
+    def kernel_host_only_modules(self) -> frozenset[str]:
+        """按设计无设备算子、跳过 kernel 测试的模块（默认 type_traits/host_stdlib/fwd/concepts）。
+
+        settings 的 ``tests.kernel_host_only_modules`` 可覆盖；留空则用分类器内置默认。
+        """
+        from core.testing.kernel_requirement import HOST_ONLY_MODULES
+
+        raw = self.raw.get("tests", {}).get("kernel_host_only_modules")
+        return frozenset(str(m) for m in raw) if raw else HOST_ONLY_MODULES
+
+    @property
+    def host_syntax_repair_rounds(self) -> int:
+        """生成 host 测试后做 g++ 语法自检、失败回灌模型修复的最大轮数（默认 2；0=只检查不修；<0=关闭）。"""
+        return int(self.raw.get("tests", {}).get("host_syntax_repair_rounds", 2))
 
     @property
     def source_repo_prefix(self) -> str:

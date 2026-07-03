@@ -30,7 +30,8 @@ from pathlib import Path
 
 from core.analysis.dep_graph import HeaderDependencyGraphReport
 from core.analysis.inventory import HeaderInventoryReport, namespace_for_root
-from core.analysis.migration_status import MigrationStatusReport
+from core.analysis.migration_state import VALIDATED_STATUSES
+from core.analysis.migration_status import MigrationStatusReport, policy_key
 from core.analysis.test_index import CCCLTestIndexReport
 from core.common.config import Config
 from core.common.utils import save_text
@@ -40,11 +41,13 @@ from core.planning.folder_planner import (
     _dependency_closure,
     _source_stats,
 )
+from core.testing.kernel_requirement import needs_kernel_test
 
 DEFAULT_PACKAGE_PLAN_JSON = "package_migration_plan.json"
 DEFAULT_PACKAGE_PLAN_MD = "package_migration_plan.md"
-# 与 pipeline.SAFE_DEPENDENCY_SKIP_STATUSES / migration_state.VALIDATED_STATUSES 对齐。
-SAFE_STATUSES = frozenset({"host_passed", "kernel_passed", "full_passed"})
+# 已完成/已验证状态集合：单一事实源在 core.analysis.migration_state.VALIDATED_STATUSES，
+# 与 pipeline.SAFE_DEPENDENCY_SKIP_STATUSES / test_migrator 的依赖就绪集合共用同一份定义。
+SAFE_STATUSES = VALIDATED_STATUSES
 SCHEMA_VERSION = 1
 MARKDOWN_BATCH_HEADER_LIMIT = 80
 MARKDOWN_LIST_LIMIT = 40
@@ -65,11 +68,13 @@ def _policy_deferred(header: str, config: Config) -> tuple[bool, str]:
     （与 batch_candidates 一致），不在此延期。
     """
     policy = config.migration_policy
-    if header in policy.public_aggregation_headers:
+    # 整树扫描下 std 头键为 `std/...`；归一到 cuda/std 命名空间再匹配策略（单层扫描为 no-op）。
+    key = policy_key(header)
+    if key in policy.public_aggregation_headers:
         return True, "public_aggregation"
-    if header.startswith(tuple(policy.deferred_upstream_support_prefixes)):
+    if key.startswith(tuple(policy.deferred_upstream_support_prefixes)):
         return True, "deferred_upstream_support"
-    if header in policy.bootstrap_manual_coverage:
+    if key in policy.bootstrap_manual_coverage:
         return True, "bootstrap_manual"
     return False, ""
 
@@ -291,6 +296,13 @@ def build_package_plan_payload(
         deps = dep_by_header.get(header, [])
         closure_size = len(_dependency_closure(header, dep_by_header))
         stats = _source_stats(header_root, header)
+        try:
+            src_text = (header_root / header).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            src_text = ""
+        needs_kernel = needs_kernel_test(
+            header, src_text, host_only_modules=config.kernel_host_only_modules
+        )
         true_missing = candidate.true_missing_dependency_count if candidate else 0
         score = _complexity_score(
             stats=stats,
@@ -313,6 +325,8 @@ def build_package_plan_payload(
             "true_missing_dependency_count": true_missing,
             "mapped_test_count": len(test_by_header.get(header, [])),
             "in_cycle": in_cycle,
+            "needs_kernel_test": needs_kernel,
+            "kernel_requirement_source": "deterministic_rule_provisional",
             "status": status_entry.status if status_entry else "pending",
             "migrated": False,
         }
@@ -345,6 +359,7 @@ def build_package_plan_payload(
         )
 
     cycle_count = sum(1 for comp in components if len(comp) > 1)
+    host_only_count = sum(1 for d in details.values() if not d["needs_kernel_test"])
     completed_entries = []
     for header in sorted(completed):
         status_entry = status_by_header.get(header)
@@ -374,6 +389,7 @@ def build_package_plan_payload(
             "blocked": len(blocked_entries),
             "batch_count": len(batches),
             "cycle_count": cycle_count,
+            "host_only_header_count": host_only_count,
         },
         "batches": batches,
         "completed_headers": completed_entries,
@@ -467,10 +483,11 @@ def plan_to_markdown(plan: dict, *, json_name: str = DEFAULT_PACKAGE_PLAN_JSON) 
         for item in (batch.get("headers") or [])[:MARKDOWN_BATCH_HEADER_LIMIT]:
             mark = "x" if item.get("migrated") else " "
             cyc = " [cycle]" if item.get("in_cycle") else ""
+            host_only = "" if item.get("needs_kernel_test", True) else " [host-only]"
             lines.append(
                 f"- [{mark}] `{item['source_header']}` -> `{item['target_relpath']}` "
                 f"({item['complexity_label']}, score={item['complexity_score']}, "
-                f"deps={item['dependency_closure_size']}, tests={item['mapped_test_count']}){cyc}"
+                f"deps={item['dependency_closure_size']}, tests={item['mapped_test_count']}){cyc}{host_only}"
             )
         extra = batch["header_count"] - MARKDOWN_BATCH_HEADER_LIMIT
         if extra > 0:

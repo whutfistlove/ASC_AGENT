@@ -79,8 +79,14 @@ class RepoVerifier:
         return self.config.repo_verify["checks"]
 
     @property
-    def _outputs(self) -> Path:
-        return self.config.output_dir
+    def _fix_dir(self) -> Path:
+        """post_hook_baseline* 归 fix 类。"""
+        return self.config.fix_output_dir
+
+    @property
+    def _repo_dir(self) -> Path:
+        """git/clang_format 提交校验日志归 repo 类。"""
+        return self.config.repo_log_output_dir
 
     # ----- 单步操作 ----- #
     def check_clean_worktree(self):
@@ -134,11 +140,11 @@ class RepoVerifier:
         if not target_file.exists():
             return None
         suffix = target_file.suffix or ".txt"
-        baseline_path = self._outputs / f"post_hook_baseline{suffix}"
+        baseline_path = self._fix_dir / f"post_hook_baseline{suffix}"
         content = target_file.read_text(encoding="utf-8")
         save_text(baseline_path, content)
         if extra_name:
-            save_text(self._outputs / extra_name, content)
+            save_text(self._fix_dir / extra_name, content)
         return baseline_path
 
     # ----- 组合流程 ----- #
@@ -164,7 +170,7 @@ class RepoVerifier:
         if rv.get("require_clean_worktree", True):
             self._log("检查目标仓库（ACCL）工作区是否干净...")
             status = self.check_clean_worktree()
-            save_text(self._outputs / "git_status_before_verify.log",
+            save_text(self._repo_dir / "git_status_before_verify.log",
                       (status.stdout or "") + "\n" + (status.stderr or ""))
             if status.returncode != 0:
                 self._log("git status 检查失败")
@@ -174,7 +180,7 @@ class RepoVerifier:
                 return info
 
         branch = self.checkout_new_branch(branch_name)
-        save_text(self._outputs / "git_checkout.log",
+        save_text(self._repo_dir / "git_checkout.log",
                   (branch.stdout or "") + "\n" + (branch.stderr or ""))
         if branch.returncode != 0:
             self._log("创建分支失败")
@@ -185,7 +191,7 @@ class RepoVerifier:
         self._log(f"已写入目标文件: {target_file_path}")
 
         fmt = self.run_clang_format(target_file_path)
-        save_text(self._outputs / "clang_format.log",
+        save_text(self._repo_dir / "clang_format.log",
                   (fmt.stdout or "") + "\n" + (fmt.stderr or ""))
         if fmt.returncode != 0:
             self._log("clang-format 执行失败")
@@ -195,7 +201,7 @@ class RepoVerifier:
 
         commit = self.git_add_and_commit(commit_message, target_relpath)
         commit_log = (commit.stdout or "") + "\n" + (commit.stderr or "")
-        save_text(self._outputs / "git_commit.log", commit_log)
+        save_text(self._repo_dir / "git_commit.log", commit_log)
 
         checks = check_commit_passed(commit_log, self._checks)
         info["checks"] = checks
@@ -226,7 +232,7 @@ class RepoVerifier:
 
         target_file_path = self.write_target_file(generated_file_path, target_relpath)
         fmt = self.run_clang_format(target_file_path)
-        save_text(self._outputs / f"clang_format_round{round_index}.log",
+        save_text(self._repo_dir / f"clang_format_round{round_index}.log",
                   (fmt.stdout or "") + "\n" + (fmt.stderr or ""))
         if fmt.returncode != 0:
             self._save_baseline_into(info, target_file_path, f"post_hook_baseline_round{round_index}.h")
@@ -235,7 +241,7 @@ class RepoVerifier:
 
         commit = self.git_add_and_commit(commit_message, target_relpath)
         commit_log = (commit.stdout or "") + "\n" + (commit.stderr or "")
-        save_text(self._outputs / f"git_commit_round{round_index}.log", commit_log)
+        save_text(self._repo_dir / f"git_commit_round{round_index}.log", commit_log)
 
         checks = check_commit_passed(commit_log, self._checks)
         info["checks"] = checks
@@ -251,10 +257,10 @@ class RepoVerifier:
         info = {"branch_name": branch_name, "push_ok": False, "git_push_log_path": ""}
         push = self.git_push(branch_name)
         log = (push.stdout or "") + "\n" + (push.stderr or "")
-        log_path = self._outputs / "git_push.log"
+        log_path = self._repo_dir / "git_push.log"
         save_text(log_path, log)
         save_text(
-            self._outputs / "git_push_status.log",
+            self._repo_dir / "git_push_status.log",
             f"push {'success' if push.returncode == 0 else 'failed'}: {branch_name}\n",
         )
         info["git_push_log_path"] = str(log_path)

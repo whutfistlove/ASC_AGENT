@@ -1,0 +1,19 @@
+#ifndef ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_MEMORY_
+#define ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_MEMORY_
+
+#include "asc/std/__config"
+
+#if defined(__CCE__)
+#define ASC_DEVICE_CODE
+#else
+#include <memory>
+#endif
+
+// [MIGRATION NOTE] The original CCCL header conditionally included the host's
+// <memory> via _CCCL_HOSTED() and defined THRUST_INCLUDING_ALGORITHMS_HEADER
+// to break include cycles in NVC++/Thrust. ASC-STL does not have _CCCL_HOSTED,
+// so we include <memory> directly on the host side. On the device side, <memory>
+// is not available. The THRUST_INCLUDING_ALGORITHMS_HEADER cycle-breaking logic
+// is NVC++/Thrust-specific and has been removed.
+
+#endif // ASC_STL_INCLUDE_ASC_STD___HOST_STDLIB_MEMORY_

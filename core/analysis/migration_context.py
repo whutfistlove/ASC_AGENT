@@ -37,9 +37,11 @@ DEFAULT_LIMITS = {
     "max_source_chars": 16000,
     "max_accl_chars": 16000,
     "max_sibling_chars": 6000,
+    "max_dep_chars": 6000,
     "max_test_chars": 8000,
     "max_example_chars": 8000,
     "max_siblings": 4,
+    "max_dep_headers": 6,
     "max_tests": 5,
     "max_examples": 3,
 }
@@ -192,6 +194,60 @@ def _nearby_siblings(
         if len(siblings) >= max_siblings:
             break
     return siblings
+
+
+def _migrated_dependency_headers(
+    *,
+    entry_header: str,
+    dep_graph: HeaderDependencyGraphReport,
+    status_by_header: dict[str, dict],
+    target_repo: str | Path,
+    max_dep_headers: int,
+    max_chars: int,
+    exclude_relpaths: set[str],
+) -> list[dict]:
+    """Read the *migrated* ACCL content of the entry's direct dependencies.
+
+    Motivation: CCCL→ACCL is not 1:1 (macros renamed, include form changed,
+    signatures可能微调). When rewriting an entry header, the model must consume
+    the dependency **as it was migrated into ACCL**, not the CCCL-side shape it
+    would otherwise infer. The leaf-first closure guarantees a direct dependency
+    is already written to the target repo by the time the entry is rewritten.
+
+    Gate on **on-disk existence**, not on the passed-in status report: within a
+    single closure run the report is built once up front, so a dependency
+    migrated earlier in the *same* run still shows a stale (pre-run) status even
+    though its ACCL file already exists on disk. Existence reflects what the
+    entry will actually ``#include``. The recorded ``status`` is informational
+    so the model can weigh how validated each dependency is.
+
+    Bounded (``max_dep_headers`` × ``max_chars``), limited to direct
+    dependencies, and deduped against ``exclude_relpaths`` (the nearby sibling
+    set) so a same-directory dependency is not spent twice in the prompt.
+    """
+    direct_deps = _dep_map(dep_graph).get(entry_header, [])
+    headers: list[dict] = []
+    for dep in direct_deps:
+        status = status_by_header.get(dep, {})
+        target_relpath = status.get("target_relpath")
+        if not target_relpath or target_relpath in exclude_relpaths:
+            continue
+        content = _read_bounded(
+            Path(target_repo) / target_relpath, root=target_repo, max_chars=max_chars
+        )
+        if not content["exists"]:
+            continue
+        headers.append(
+            {
+                "source_header": dep,
+                "target_relpath": target_relpath,
+                "status": status.get("status"),
+                "content": content,
+            }
+        )
+        if len(headers) >= max_dep_headers:
+            break
+    return headers
 
 
 def _mapped_tests(
@@ -384,6 +440,22 @@ def build_migration_context_pack(
     closure = _closure_leaf_first(entry_header, dep_graph)
     namespace = namespace_for_root(inventory.header_root)
 
+    nearby_siblings = _nearby_siblings(
+        entry_status=entry_status,
+        target_repo=target_repo,
+        max_siblings=effective_limits["max_siblings"],
+        max_chars=effective_limits["max_sibling_chars"],
+    )
+    migrated_dependencies = _migrated_dependency_headers(
+        entry_header=entry_header,
+        dep_graph=dep_graph,
+        status_by_header=status_by_header,
+        target_repo=target_repo,
+        max_dep_headers=effective_limits["max_dep_headers"],
+        max_chars=effective_limits["max_dep_chars"],
+        exclude_relpaths={sibling["target_relpath"] for sibling in nearby_siblings},
+    )
+
     return {
         "schema_version": 1,
         "entry_header": entry_header,
@@ -418,12 +490,8 @@ def build_migration_context_pack(
             target_repo=target_repo,
             max_chars=effective_limits["max_accl_chars"],
         ),
-        "nearby_accl_sibling_headers": _nearby_siblings(
-            entry_status=entry_status,
-            target_repo=target_repo,
-            max_siblings=effective_limits["max_siblings"],
-            max_chars=effective_limits["max_sibling_chars"],
-        ),
+        "migrated_accl_dependencies": migrated_dependencies,
+        "nearby_accl_sibling_headers": nearby_siblings,
         "mapped_upstream_tests": _mapped_tests(
             entry_status=entry_status,
             test_index=test_index,

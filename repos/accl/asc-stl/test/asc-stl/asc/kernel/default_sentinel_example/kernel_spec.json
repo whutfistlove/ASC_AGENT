@@ -1,0 +1,8 @@
+{
+  "input_init": "h_x[i] = static_cast<float>(i);",
+  "element_op_code": "asc::std::default_sentinel_t s = asc::std::default_sentinel; (void)s; z_val = 1.0f;",
+  "golden_code": "expected = 1.0f;",
+  "gm_inputs": 1,
+  "gm_outputs": 1,
+  "dtype": "float"
+}

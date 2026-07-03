@@ -1,0 +1,18 @@
+- cccl: "::cuda::std::"
+  asc: "asc::std::"
+  status: mapped
+  always_inject: true
+  note: "完全限定或裸 cuda::std 命名空间映射"
+  source: ["examples/headers/max.cccl.h", "examples/headers/max.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-15"
+
+- cccl: "_CUDA_VSTD::"
+  asc: "asc::std::"
+  status: mapped
+  always_inject: true
+  note: "libcudacxx 内部 cuda::std 命名空间别名"
+  source: ["repos/cccl/libcudacxx/include/cuda/std/__algorithm/swap.h", "examples/headers/swap.accl.h"]
+  reviewed_by: agent
+  reviewed_at: "2026-06-19"
+

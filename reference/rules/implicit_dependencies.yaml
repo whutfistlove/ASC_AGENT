@@ -1,0 +1,58 @@
+# Generic qualified-symbol dependency discovery.
+#
+# The scanner captures any qualified symbol and resolves its provider from the
+# actual source-tree header index. Broad rules use exact header-stem matches;
+# non-conventional providers such as move_if_noexcept -> move.h live in the
+# concrete mappings/symbol_providers.yaml dataset.
+- rule_id: qualified-cuda-std-provider
+  kind: qualified-name
+  pattern: '(?<![A-Za-z0-9_])(?:_CUDA_VSTD|(?:::)?cuda::std)::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)(?=\s*(?:<[^;{}()]*>)?\s*\()'
+  resolver: header_stem
+  symbol_group: symbol
+  header_globs:
+    - "**/{symbol}.h"
+    - "**/{symbol}"
+    - "{symbol}.h"
+    - "{symbol}"
+  prefix_fallback: false
+  minimum_prefix_length: 3
+  provider_modules:
+    - __utility
+    - __type_traits
+    - __functional
+  module_priority:
+    - __utility
+    - __algorithm
+    - __functional
+    - __type_traits
+    - __memory
+    - __iterator
+    - __ranges
+    - __numeric
+  include_template: "{namespace}/{header}"
+  status: required
+  action: infer_provider_from_header_index
+  note: "泛化识别 _CUDA_VSTD/cuda::std/::cuda::std 限定函数调用，无需逐个枚举 move 等具体 API。"
+  source: ["core/analysis/inventory.py"]
+  reviewed_by: agent
+  reviewed_at: "2026-07-01"
+
+- rule_id: qualified-cuda-extension-provider
+  kind: qualified-name
+  pattern: '(?<![A-Za-z0-9_])(?:::)?cuda::(?!std::)(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)(?=\s*(?:<[^;{}()]*>)?\s*\()'
+  resolver: header_stem
+  symbol_group: symbol
+  header_globs:
+    - "**/{symbol}.h"
+    - "**/{symbol}"
+    - "{symbol}.h"
+    - "{symbol}"
+  prefix_fallback: false
+  minimum_prefix_length: 3
+  include_template: "{namespace}/{header}"
+  status: required
+  action: infer_provider_from_header_index
+  note: "为 cuda/ 扩展层提供同样的限定符号隐含依赖推导。"
+  source: ["core/analysis/inventory.py"]
+  reviewed_by: agent
+  reviewed_at: "2026-07-01"

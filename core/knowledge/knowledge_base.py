@@ -5,14 +5,10 @@
 注入到模型提示词里——让模型「先查可审计知识库」，而不是凭记忆重推 CCCL→ASC 的映射。
 
 设计与 core/example_retrieval.py 对齐：纯词法、离线、确定性，无外部依赖。
-来源优先级：
+``reference/manifest.yaml`` 把知识分成两类：
 
-* ``reference/symbol_mapping.yaml`` —— 本项目所在的「头文件层」符号/宏/命名空间映射，
-  always_inject 的记录对每个头都注入（命名空间/修饰符这类通用规则）。
-* ``reference/grammar_rules.yaml`` —— 官方语法改写规则（__device__/__shared__/assert/...），
-  仅当其触发词出现在源码里才注入。
-* ``reference/constraint_rules.yaml`` —— 官方不支持/受限特性，仅当高信号关键词
-  （double/complex/texture/...）整词出现在源码里才注入。
+* ``mappings/``：宏、命名空间、include、路径、API 等具体映射事实；
+* ``rules/``：语法、约束、隐含依赖等可复用匹配规则。
 
 官方 api-mapping/（runtime/device 层、945+230 条）与本层不同级，体量大，**不在此自动注入**；
 需要时由专门查询函数按需检索，避免污染提示词。
@@ -24,9 +20,8 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
-import yaml
+from core.knowledge.reference_loader import load_reference_bundle
 
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -46,45 +41,47 @@ def _tokens_lower(text: str) -> set[str]:
     return {t.lower() for t in _TOKEN_RE.findall(text or "")}
 
 
-def _safe_yaml(path: Path) -> Any:
-    """读 YAML；文件缺失/解析失败一律返回 None（保证干净检出/无 reference 时不崩）。"""
-    try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return None
-
-
-def _as_list(doc: Any) -> list[dict]:
-    return [x for x in doc if isinstance(x, dict)] if isinstance(doc, list) else []
-
-
 @dataclass
 class KnowledgeBase:
     reference_dir: Path
-    symbols: list[dict] = field(default_factory=list)
+    mappings: list[dict] = field(default_factory=list)
+    rule_sets: dict[str, list[dict]] = field(default_factory=dict)
     segment_substitutions: list[dict] = field(default_factory=list)
     migration_policy: dict = field(default_factory=dict)
-    grammar_rules: list[dict] = field(default_factory=list)
-    constraint_rules: list[dict] = field(default_factory=list)
+    catalogs: dict[str, dict] = field(default_factory=dict)
+    layout: str = "empty"
 
     # ----- 加载 ----- #
     @classmethod
     def load(cls, reference_dir: Path | str) -> "KnowledgeBase":
         ref = Path(reference_dir)
-        sym_doc = _safe_yaml(ref / "symbol_mapping.yaml")
-        sym_doc = sym_doc if isinstance(sym_doc, dict) else {}
+        bundle = load_reference_bundle(ref, strict=False)
         return cls(
             reference_dir=ref,
-            symbols=_as_list(sym_doc.get("symbols")),
-            segment_substitutions=_as_list(sym_doc.get("segment_substitutions")),
-            migration_policy=dict(sym_doc.get("migration_policy") or {}),
-            grammar_rules=_as_list(_safe_yaml(ref / "grammar_rules.yaml")),
-            constraint_rules=_as_list(_safe_yaml(ref / "constraint_rules.yaml")),
+            mappings=bundle.mappings,
+            rule_sets=bundle.rules,
+            segment_substitutions=bundle.segment_substitutions,
+            migration_policy=bundle.migration_policy,
+            catalogs=bundle.catalogs,
+            layout=bundle.layout,
         )
 
     @property
+    def symbols(self) -> list[dict]:
+        """Compatibility alias for callers written against the v1 layout."""
+        return self.mappings
+
+    @property
+    def grammar_rules(self) -> list[dict]:
+        return list(self.rule_sets.get("grammar", []))
+
+    @property
+    def constraint_rules(self) -> list[dict]:
+        return list(self.rule_sets.get("constraint", []))
+
+    @property
     def is_empty(self) -> bool:
-        return not (self.symbols or self.grammar_rules or self.constraint_rules)
+        return not (self.mappings or self.rule_sets)
 
     # ----- 检索 ----- #
     def _grammar_triggers(self, rule: dict) -> set[str]:
@@ -105,18 +102,18 @@ class KnowledgeBase:
         return {t.lower() for t in _TOKEN_RE.findall(feat) if t.lower() in _TRIGGER_VOCAB}
 
     def relevant_for(self, source_text: str, *, max_rules: int = 8) -> dict[str, list[dict]]:
-        """返回命中当前源码的 symbols / grammar / constraints。"""
+        """返回命中当前源码的 mappings / grammar / constraints。"""
         src_tokens = _tokens(source_text)
         src_tokens_low = {t.lower() for t in src_tokens}
 
-        symbols: list[dict] = []
-        for s in self.symbols:
+        mappings: list[dict] = []
+        for s in self.mappings:
             if s.get("always_inject"):
-                symbols.append(s)
+                mappings.append(s)
                 continue
             cccl = str(s.get("cccl", ""))
             if cccl and (_tokens(cccl) & src_tokens):
-                symbols.append(s)
+                mappings.append(s)
 
         def _fire(triggers: set[str]) -> bool:
             for trig in triggers:
@@ -129,21 +126,26 @@ class KnowledgeBase:
 
         grammar = [r for r in self.grammar_rules if _fire(self._grammar_triggers(r))][:max_rules]
         constraints = [r for r in self.constraint_rules if _fire(self._constraint_triggers(r))][:max_rules]
-        return {"symbols": symbols, "grammar": grammar, "constraints": constraints}
+        return {
+            "mappings": mappings,
+            "symbols": mappings,  # v1 compatibility
+            "grammar": grammar,
+            "constraints": constraints,
+        }
 
     # ----- 渲染为提示词块 ----- #
     def render_block(self, source_text: str) -> str:
         """渲染成注入提示词的 Markdown 块；无命中则返回空串（不注入）。"""
         hit = self.relevant_for(source_text)
-        symbols, grammar, constraints = hit["symbols"], hit["grammar"], hit["constraints"]
-        if not (symbols or grammar or constraints):
+        mappings, grammar, constraints = hit["mappings"], hit["grammar"], hit["constraints"]
+        if not (mappings or grammar or constraints):
             return ""
 
         lines = ["【reference/ 可审计知识库（命中项，按此映射，勿凭记忆臆造）】"]
 
-        if symbols:
-            lines.append("# 符号 / 宏 / 命名空间映射（CCCL → ASC-STL）")
-            for s in symbols:
+        if mappings:
+            lines.append("# 具体映射事实（宏 / 命名空间 / include，CCCL → ASC-STL）")
+            for s in mappings:
                 note = str(s.get("note", "")).strip()
                 suffix = f"  // {note}" if note else ""
                 lines.append(f"- `{s.get('cccl', '')}` → `{s.get('asc', '')}`{suffix}")

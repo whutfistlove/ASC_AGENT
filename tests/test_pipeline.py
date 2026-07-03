@@ -46,8 +46,8 @@ def test_pipeline_passes_on_first_commit(tmp_path):
     assert result.rounds_used == 0
     # 目标 guard 应已应用 __cccl -> __asc 段替换
     assert result.expected_header_guard == "ASC_STL_INCLUDE_ASC_STD___ASC_OS_H_"
-    assert (cfg.output_dir / "rewritten_target.h").exists()
-    assert (cfg.output_dir / "git_push.log").exists()
+    assert (cfg.model_output_dir / "rewritten_target.h").exists()
+    assert (cfg.repo_log_output_dir / "git_push.log").exists()
 
 
 def test_pipeline_converges_after_two_rounds(tmp_path):
@@ -61,8 +61,8 @@ def test_pipeline_converges_after_two_rounds(tmp_path):
     assert result.pushed is True
     assert result.rounds_used == 2
     # 第 2 轮的日志与基线都应落盘
-    assert (cfg.output_dir / "git_commit_round2.log").exists()
-    assert (cfg.output_dir / "post_hook_baseline_round2.h").exists()
+    assert (cfg.repo_log_output_dir / "git_commit_round2.log").exists()
+    assert (cfg.fix_output_dir / "post_hook_baseline_round2.h").exists()
 
 
 def test_pipeline_stops_at_max_rounds(tmp_path):

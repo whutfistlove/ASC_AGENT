@@ -328,6 +328,17 @@ def parse_migration_ledger_statuses(ledger_path: str | Path) -> list[LedgerStatu
     return [dedup[key] for key in sorted(dedup)]
 
 
+def policy_key(name: str) -> str:
+    """Normalize a header/dependency key to its cuda/std-relative form for policy matching.
+
+    Whole-tree (cuda root) scans key std headers as ``std/__cccl/...`` while the
+    migration_policy prefixes/sets are expressed relative to the cuda/std namespace
+    (``__cccl/...``). Stripping a single leading ``std/`` makes both layers match the
+    same policy. No-op for single-layer scans (keys never start with ``std/``).
+    """
+    return name[len("std/"):] if name.startswith("std/") else name
+
+
 def target_relpath_for_header(
     source_header: str,
     *,
@@ -427,6 +438,9 @@ def _classify_missing_dependency(
     target_repo_prefix: str,
     policy: MigrationPolicy,
 ) -> tuple[str, str]:
+    # 整树扫描下 std 头键为 `std/...`；策略键以 cuda/std 命名空间为基准，归一后再匹配。
+    header = policy_key(header)
+    dependency = policy_key(dependency)
     if header in policy.public_aggregation_headers:
         return (
             "public_aggregation_narrowed",
@@ -598,9 +612,10 @@ def _build_batch_candidates(
     for header in headers:
         if header.status != "pending" or header.target_exists:
             continue
-        if header.source_header in policy.public_aggregation_headers:
+        candidate_key = policy_key(header.source_header)
+        if candidate_key in policy.public_aggregation_headers:
             continue
-        if header.source_header.startswith(tuple(policy.deferred_upstream_support_prefixes)):
+        if candidate_key.startswith(tuple(policy.deferred_upstream_support_prefixes)):
             continue
         closure = _dependency_closure(header.source_header, dep_map)
         missing_counts = _classify_candidate_dependency_counts(

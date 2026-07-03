@@ -184,7 +184,7 @@ def test_attempt_history_enters_fix_request(tmp_path):
         attempt_history="- 第1轮：根因=operator；改动=[header]；结果=仍失败",
         verbose=False, toolbox=None,
     )
-    req = (cfg.output_dir / "fix_request_test_round1.md").read_text(encoding="utf-8")
+    req = (cfg.fix_output_dir / "fix_request_test_round1.md").read_text(encoding="utf-8")
     assert "历次修复尝试与结果" in req and "第1轮" in req
 
 

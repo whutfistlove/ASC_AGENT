@@ -1,0 +1,4 @@
+interface:
+  display_name: "CCCL SIMT API Mapping"
+  short_description: "逐文件审计 CCCL CUDA API 并映射晟腾 SIMT 文档"
+  default_prompt: "Use $map-cccl-simt-api to audit CCCL CUDA-side APIs and map them to local Ascend SIMT documentation."

@@ -8,6 +8,7 @@
     folder-plan      扫描一个源目录并生成首批/后续迁移推荐计划
     folder-migrate   人工确认 folder-plan 后按批次执行闭包迁移
     dependency-convert  按依赖闭包 leaf-first 迁移一个 header（Node 12）
+    api-map  独立逐文件提取 cuda/ 全树引用的外部 CUDA API，并映射本地晟腾 SIMT 文档
     selftest 用内置示例做一次离线冒烟（mock，无需仓库/网络）
 
 用法：
@@ -18,6 +19,7 @@
     python main.py folder-plan --source-dir std/__algorithm --cccl-repo repos/cccl --real-ai
     python main.py folder-migrate --plan outputs/folder_migration_plan.json --batch first --approve --real-ai
     python main.py dependency-convert --entry-header __algorithm/all_of.h --plan-only
+    python main.py api-map --prepare-only
     python main.py selftest
 """
 

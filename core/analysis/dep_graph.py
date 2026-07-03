@@ -195,13 +195,18 @@ def scan_dependency_graph(
     cccl_repo: str | Path | None = None,
     *,
     include_root_rel: str | Path = HEADER_ROOT_REL,
+    implicit_dependency_rules: Sequence[Mapping] | None = None,
     symbol_dependency_rules: Sequence[Mapping] | None = None,
 ) -> HeaderDependencyGraphReport:
     """Scan CCCL headers and build an in-tree dependency graph."""
     inventory = scan_header_inventory(
         cccl_repo,
         include_root_rel=include_root_rel,
-        symbol_dependency_rules=symbol_dependency_rules,
+        implicit_dependency_rules=(
+            implicit_dependency_rules
+            if implicit_dependency_rules is not None
+            else symbol_dependency_rules
+        ),
     )
     # build_dependency_graph_report derives the namespace from inventory.header_root.
     return build_dependency_graph_report(inventory)
